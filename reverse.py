@@ -500,7 +500,7 @@ def draw_graph(predicted_h: tuple[UInt32Tree, ...]):
             graph.add_node(bit.alias_name, subset=counter)
 
     used_bits = set(curr_line)
-    while curr_line and counter < 20:
+    while curr_line and counter:
         counter += 1
 
         used_prev = 0
@@ -542,14 +542,15 @@ def draw_graph(predicted_h: tuple[UInt32Tree, ...]):
         curr_line, next_line = next_line, []
 
     print('Starting drawning')
-    pos = networkx.multipartite_layout(graph, align='horizontal', scale=1000000)
+    pos = networkx.multipartite_layout(graph, align='horizontal')
+    plt.figure(figsize=(25, 25))
     networkx.draw_networkx(
         graph,
         pos=pos,
         with_labels=False,
-        node_size=1,
-        width=0.03,
-        arrowsize=0.1,
+        node_size=2,
+        width=0.2,
+        arrowsize=2,
         node_shape='.',
     )
     # text = networkx.draw_networkx_labels(graph, pos=pos, font_size=2)
@@ -557,7 +558,7 @@ def draw_graph(predicted_h: tuple[UInt32Tree, ...]):
     #     t.set_rotation(45)
     # plt.show()
     print('Saving to file')
-    plt.savefig("bits_tree.png", dpi=1000)
+    plt.savefig("bits_tree.png", dpi=500, bbox_inches='tight')
 
 
 def push_line_predict(
