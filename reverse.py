@@ -1,4 +1,3 @@
-import base64
 from abc import ABC
 from collections import deque
 from dataclasses import dataclass
@@ -59,10 +58,8 @@ class TreeBitAtom:
         raise NotImplementedError
 
     @property
-    def alias_name(self):
-        if self.name is NotImplemented:
-            return base64.b64encode(str(hash(self.key)).encode('ascii'))
-        return self.name
+    def label(self):
+        raise NotImplementedError
 
 
 class TreeBit(TreeBitAtom):
@@ -73,6 +70,10 @@ class TreeBit(TreeBitAtom):
 
     @property
     def key(self):
+        return self.name
+
+    @property
+    def label(self):
         return self.name
 
     @classmethod
@@ -101,6 +102,10 @@ class TreeBitNOT(TreeBitAtom):
     def get_key(cls, bit: TreeBitAtom):
         return bit.key, cls.cls_name
 
+    @property
+    def label(self):
+        return self.cls_name
+
     @classmethod
     def with_resolve(cls, a: TreeBit):
         if a.resolved:
@@ -124,6 +129,10 @@ class TreeBitOperator(TreeBitAtom, ABC):
     @cached_property
     def key(self):
         return self.get_key(self.a, self.b)
+
+    @property
+    def label(self):
+        return self.cls_name
 
     @classmethod
     def get_key(cls, a: TreeBitAtom, b: TreeBitAtom):
@@ -489,6 +498,15 @@ def scan_lines(predicted_h: tuple[UInt32Tree, ...]):
 
 def draw_graph(predicted_h: tuple[UInt32Tree, ...]):
     graph = networkx.DiGraph()
+    labels = {}
+    subset_color = [
+        "red",
+        "orange",
+        "olive",
+        "green",
+        "blue",
+        "purple",
+    ]
 
     next_line = []
     curr_line = []
@@ -497,7 +515,8 @@ def draw_graph(predicted_h: tuple[UInt32Tree, ...]):
     for h in predicted_h:
         for bit in h.bits:
             curr_line.append(bit)
-            graph.add_node(bit.alias_name, subset=counter)
+            graph.add_node(bit.key, subset=counter)
+            labels[bit.key] = bit.label
 
     used_bits = set(curr_line)
     while curr_line and counter:
@@ -511,30 +530,36 @@ def draw_graph(predicted_h: tuple[UInt32Tree, ...]):
                 if bit.bit not in used_bits:
                     next_line.append(bit.bit)
                     used_bits.add(bit.bit)
-                    graph.add_node(bit.bit.alias_name, subset=counter)
+                    graph.add_node(bit.bit.key, subset=counter)
+                    labels[bit.bit.key] = bit.bit.label
                 else:
                     if not bit.bit.resolved:
                         used_prev += 1
-                graph.add_edge(bit.alias_name, bit.bit.alias_name)
+                graph.add_edge(bit.key, bit.bit.key, color=subset_color[counter % len(subset_color)])
+                graph[bit.key][bit.bit.key]['color'] = subset_color[counter % len(subset_color)]
                 continue
             if isinstance(bit, TreeBitOperator):
                 if bit.a not in used_bits:
                     next_line.append(bit.a)
                     used_bits.add(bit.a)
-                    graph.add_node(bit.a.alias_name, subset=counter)
+                    graph.add_node(bit.a.key, subset=counter)
+                    labels[bit.a.key] = bit.a.label
                 else:
                     if not bit.a.resolved:
                         used_prev += 1
                 if bit.b not in used_bits:
                     next_line.append(bit.b)
                     used_bits.add(bit.b)
-                    graph.add_node(bit.b.alias_name, subset=counter)
+                    graph.add_node(bit.b.key, subset=counter)
+                    labels[bit.b.key] = bit.b.label
                 else:
                     if not bit.b.resolved:
                         used_prev += 1
 
-                graph.add_edge(bit.alias_name, bit.a.alias_name)
-                graph.add_edge(bit.alias_name, bit.b.alias_name)
+                graph.add_edge(bit.key, bit.a.key)
+                graph.add_edge(bit.key, bit.b.key)
+                graph[bit.key][bit.a.key]['color'] = subset_color[counter % len(subset_color)]
+                graph[bit.key][bit.b.key]['color'] = subset_color[counter % len(subset_color)]
                 continue
             raise Exception(f'Undefined TreeBit {type(bit)}')
 
@@ -543,20 +568,33 @@ def draw_graph(predicted_h: tuple[UInt32Tree, ...]):
 
     print('Starting drawning')
     pos = networkx.multipartite_layout(graph, align='horizontal')
-    plt.figure(figsize=(25, 25))
+    node_color = [
+        subset_color[data["subset"] % len(subset_color)]
+        for _, data in graph.nodes(data=True)
+    ]
+    edge_color = [
+        edgedata["color"]
+        for _, _, edgedata in graph.edges(data=True)
+    ]
+    plt.figure(figsize=(60, 50))
     networkx.draw_networkx(
         graph,
         pos=pos,
-        with_labels=False,
-        node_size=2,
+        with_labels=True,
+        node_size=10,
+        node_color=node_color,
+        edge_color=edge_color,
         width=0.2,
         arrowsize=2,
         node_shape='.',
+        labels=labels,
+        font_size=2,
     )
-    # text = networkx.draw_networkx_labels(graph, pos=pos, font_size=2)
+
+    # text = networkx.draw_networkx_labels(graph, pos=pos,  font_size=2)
     # for t in text.values():
     #     t.set_rotation(45)
-    # plt.show()
+    plt.show()
     print('Saving to file')
     plt.savefig("bits_tree.png", dpi=500, bbox_inches='tight')
 
