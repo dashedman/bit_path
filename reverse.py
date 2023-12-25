@@ -442,8 +442,8 @@ def backward_move(
     )
     result_bits = [bit for word in w[:16] for bit in word.bits]
     # scan_lines(predicted_h)
-    draw_graph(predicted_h)
-    # push_predict(predicted_h, h_end, result_bits)
+    # draw_graph(predicted_h)
+    push_line_predict(predicted_h, h_end, result_bits)
 
 
 def scan_lines(predicted_h: tuple[UInt32Tree, ...]):
@@ -566,14 +566,8 @@ def push_line_predict(
         h_end: tuple[UInt32Tree, ...],
         result_bits: list[TreeBitAtom],
 ):
-
-    # False - rollback phase
-    # True - push phase
-    push_state = True
-    lines_history = []
-    line_to_resolve = []
-    line_to_scan = []
-    rollback_stack: deque[RollbackItem] = deque()
+    queue_to_scan: deque[RouteItem] = deque()
+    scan_queue_contains: set[TreeBitAtom] = set()
 
     # Initialisation
     for ph, eh in zip(predicted_h, h_end):
@@ -583,263 +577,184 @@ def push_line_predict(
                 continue
 
             if isinstance(e_bit.value, bool):
-                line_to_resolve.append((p_bit, e_bit.value))
+                queue_to_scan.append(
+                    RouteItem(bit=p_bit, bit_value=e_bit.value)
+                )
+                scan_queue_contains.add(p_bit)
             else:
                 raise Exception('Exit bit is not bool!!!')
 
-    while True:
-        for next_bit, data_bit_value in line_to_resolve:
-            # set predicted value
-            if next_bit.resolved:
-                if next_bit.value != data_bit_value:
-                    # Next bit value already resolved and has conflict! Need rollback!
-                    push_state = False
-                continue
-            next_bit.value = data_bit_value
+    while queue_to_scan:
+        next_route = queue_to_scan.popleft()
+        next_bit = next_route.bit
+        data_bit_value = next_route.bit_value
+        scan_queue_contains.remove(next_bit)
 
-            # extend queue
-            if isinstance(next_bit, TreeBitNOT):
-                if next_bit.bit.resolved:
-                    if not next_bit.bit.value != data_bit_value:
-                        # NOT Conflict! Rollback!
-                        push_state = False
-                        rollback_stack.append(RollbackItem(next_bit, 0))
-                    continue
-                routing_queue.append(RouteItem(next_bit.bit, not data_bit_value))
-                rollback_stack.append(RollbackItem(next_bit, 1))
+        if check_conflicts(next_bit, data_bit_value):
+            print(f'Conflict!')
+            continue
 
-            if isinstance(next_bit, TreeBitOR):
-                if next_bit.a.resolved:
-                    if next_bit.b.resolved:
-                        if next_bit.a.value or next_bit.b.value != data_bit_value:
-                            # OR Conflict! Rollback!
-                            push_state = False
-                            rollback_stack.append(RollbackItem(next_bit, 0))
-                        continue
-                    else:
-                        # B not resolved
-                        if next_bit.a.value:
-                            if not data_bit_value:
-                                # OR Conflict! Rollback!
-                                push_state = False
-                                rollback_stack.append(RollbackItem(next_bit, 0))
-                                continue
-                            # BRANCH B, A is True, X is True
-                            if configuration:
-                                # set configuration from rollback
-                                conf_b = configuration[0]
-                                routing_queue.append(RouteItem(next_bit.b, conf_b))
-                                rollback_stack.append(RollbackItem(next_bit, 1))
-                            else:
-                                # free configuration - create new rollback item
-                                routing_queue.append(RouteItem(next_bit.b, False))
-                                rollback_stack.append(
-                                    RollbackItem(next_bit, 1, ((True,),))
-                                )
-                        else:
-                            routing_queue.append(RouteItem(next_bit.b, data_bit_value))
-                            rollback_stack.append(RollbackItem(next_bit, 1))
-                else:
-                    # A not resolved
-                    if next_bit.b.resolved:
-                        if next_bit.b.value:
-                            if not data_bit_value:
-                                # OR Conflict! Rollback!
-                                push_state = False
-                                rollback_stack.append(RollbackItem(next_bit, 0))
-                                continue
-                            # BRANCH A, B is True, X is True
-                            if configuration:
-                                # set configuration from rollback
-                                conf_a = configuration[0]
-                                routing_queue.append(RouteItem(next_bit.a, conf_a))
-                                rollback_stack.append(RollbackItem(next_bit, 1))
-                            else:
-                                # free configuration - create new rollback item
-                                routing_queue.append(RouteItem(next_bit.a, False))
-                                rollback_stack.append(
-                                    RollbackItem(next_bit, 1, ((True,),))
-                                )
-                        else:
-                            routing_queue.append(RouteItem(next_bit.a, data_bit_value))
-                            rollback_stack.append(RollbackItem(next_bit, 1))
-                    else:
-                        # A and B not resolved
-                        # BRANCH A B
-                        if configuration:
-                            # set configuration from rollback
-                            conf_a, conf_b = configuration
-                            routing_queue.append(RouteItem(next_bit.a, conf_a))
-                            routing_queue.append(RouteItem(next_bit.b, conf_b))
-                            rollback_stack.append(RollbackItem(
-                                next_bit, 2,
-                                next_route.configurations[1:]
-                            ))
-                        else:
-                            # free configuration - create new rollback item
-                            if not data_bit_value:
-                                routing_queue.append(RouteItem(next_bit.a, False))
-                                routing_queue.append(RouteItem(next_bit.b, False))
-                                rollback_stack.append(RollbackItem(next_bit, 2))
-                            else:
-                                routing_queue.append(RouteItem(next_bit.a, True))
-                                routing_queue.append(RouteItem(next_bit.b, True))
-                                rollback_stack.append(
-                                    RollbackItem(
-                                        next_bit, 2,
-                                        ((False, True), (True, False))
-                                    )
-                                )
+        if check_already_resolved(next_bit):
+            print('Already!')
+            continue
 
-            if isinstance(next_bit, TreeBitAND):
-                if next_bit.a.resolved:
-                    if next_bit.b.resolved:
-                        if next_bit.a.value and next_bit.b.value != data_bit_value:
-                            # AND Conflict! Rollback!
-                            push_state = False
-                            rollback_stack.append(RollbackItem(next_bit, 0))
-                        continue
-                    else:
-                        # B not resolved
-                        if not next_bit.a.value:
-                            if data_bit_value:
-                                # AND Conflict! Rollback!
-                                push_state = False
-                                rollback_stack.append(RollbackItem(next_bit, 0))
-                                continue
+        resolved, next_route = check_and_try_resolve(next_bit, data_bit_value)
+        if resolved:
+            print(f'Resolve!')
+            queue_to_scan.appendleft(next_route)
+            scan_queue_contains.add(next_route.bit)
+            continue
 
-                            # BRANCH B, A is False, X is False
-                            if configuration:
-                                # set configuration from rollback
-                                conf_b = configuration[0]
-                                routing_queue.append(RouteItem(next_bit.b, conf_b))
-                                rollback_stack.append(RollbackItem(next_bit, 1))
-                            else:
-                                # free configuration - create new rollback item
-                                routing_queue.append(RouteItem(next_bit.b, False))
-                                rollback_stack.append(
-                                    RollbackItem(next_bit, 1, ((True,),))
-                                )
-                        else:
-                            routing_queue.append(RouteItem(next_bit.b, data_bit_value))
-                            rollback_stack.append(RollbackItem(next_bit, 1))
-                else:
-                    # A not resolved
-                    if next_bit.b.resolved:
-                        if not next_bit.b.value:
-                            if data_bit_value:
-                                # AND Conflict! Rollback!
-                                push_state = False
-                                rollback_stack.append(RollbackItem(next_bit, 0))
-                                continue
+        branch()
 
-                            # BRANCH A, B is False, X is False
-                            if configuration:
-                                # set configuration from rollback
-                                conf_a = configuration[0]
-                                routing_queue.append(RouteItem(next_bit.a, conf_a))
-                                rollback_stack.append(RollbackItem(next_bit, 1))
-                            else:
-                                # free configuration - create new rollback item
-                                routing_queue.append(RouteItem(next_bit.a, False))
-                                rollback_stack.append(
-                                    RollbackItem(next_bit, 1, ((True,),))
-                                )
-                        else:
-                            routing_queue.append(RouteItem(next_bit.a, data_bit_value))
-                            rollback_stack.append(RollbackItem(next_bit, 1))
-                    else:
-                        # A and B not resolved
-                        # BRANCH A B
-                        if configuration:
-                            # set configuration from rollback
-                            conf_a, conf_b = configuration
-                            routing_queue.append(RouteItem(next_bit.a, conf_a))
-                            routing_queue.append(RouteItem(next_bit.b, conf_b))
-                            rollback_stack.append(RollbackItem(
-                                next_bit, 2,
-                                next_route.configurations[1:]
-                            ))
-                        else:
-                            # free configuration - create new rollback item
-                            if data_bit_value:
-                                routing_queue.append(RouteItem(next_bit.a, True))
-                                routing_queue.append(RouteItem(next_bit.b, True))
-                                rollback_stack.append(RollbackItem(next_bit, 2))
-                            else:
-                                routing_queue.append(RouteItem(next_bit.a, False))
-                                routing_queue.append(RouteItem(next_bit.b, False))
-                                rollback_stack.append(
-                                    RollbackItem(
-                                        next_bit, 2,
-                                        ((False, True), (True, False))
-                                    )
-                                )
 
-            if isinstance(next_bit, TreeBitXOR):
-                if next_bit.a.resolved:
-                    if next_bit.b.resolved:
-                        if next_bit.a.value ^ next_bit.b.value != data_bit_value:
-                            # XOR Conflict! Rollback!
-                            push_state = False
-                            rollback_stack.append(RollbackItem(next_bit, 0))
-                        continue
-                    else:
-                        # B not resolved
-                        routing_queue.append(RouteItem(next_bit.b, next_bit.a.value ^ data_bit_value))
-                        rollback_stack.append(RollbackItem(next_bit, 1))
-                else:
-                    # A not resolved
-                    if next_bit.b.resolved:
-                        routing_queue.append(RouteItem(next_bit.a, next_bit.b.value ^ data_bit_value))
-                        rollback_stack.append(RollbackItem(next_bit, 1))
-                    else:
-                        # BRANCH A B
-                        if configuration:
-                            # set configuration from rollback
-                            conf_a, conf_b = configuration
-                            routing_queue.append(RouteItem(next_bit.a, conf_a))
-                            routing_queue.append(RouteItem(next_bit.b, conf_b))
-                            rollback_stack.append(RollbackItem(
-                                next_bit, 2,
-                                next_route.configurations[1:]
-                            ))
-                        else:
-                            # free configuration - create new rollback item
-                            routing_queue.append(RouteItem(next_bit.a, False))
-                            routing_queue.append(RouteItem(next_bit.b, False ^ data_bit_value))
-                            rollback_stack.append(
-                                RollbackItem(
-                                    next_bit, 2,
-                                    ((True, True ^ data_bit_value),)
-                                )
-                            )
+def check_already_resolved(next_bit: TreeBitAtom):
+    # extend queue
+    if isinstance(next_bit, TreeBitNOT):
+        if next_bit.bit.resolved:
+            return True
 
-        else:
-            # ROLLBACK
-            if rollback_stack:
-                rollback_item = rollback_stack.pop()
-                for _ in range(rollback_item.route_erase):
-                    routing_queue.pop()
+    if isinstance(next_bit, TreeBitOR):
+        if next_bit.a.resolved:
+            if next_bit.b.resolved:
+                return True
 
-                if isinstance(rollback_item.bit.value, bool):
-                    if rollback_item.configurations:
-                        # end of rollback, turn forward
-                        print(sum(bool(ri.configurations) for ri in rollback_stack), len(rollback_stack), len(routing_queue))
-                        push_state = True
+    if isinstance(next_bit, TreeBitAND):
+        if next_bit.a.resolved:
+            if next_bit.b.resolved:
+                return True
 
-                    routing_queue.appendleft(RouteItem(
-                        rollback_item.bit,
-                        rollback_item.bit.value,
-                        rollback_item.configurations
-                    ))
+    if isinstance(next_bit, TreeBitXOR):
+        if next_bit.a.resolved:
+            if next_bit.b.resolved:
+                return True
 
-                    rollback_item.bit.value = None
-                else:
-                    raise Exception('Rollback value is not bool')
+
+def check_conflicts(next_bit: TreeBitAtom, data_bit_value: bool):
+    # set predicted value
+    if next_bit.resolved:
+        if next_bit.value != data_bit_value:
+            # Next bit value already resolved and has conflict! Need rollback!
+            return True
+
+    # extend queue
+    if isinstance(next_bit, TreeBitNOT):
+        if next_bit.bit.resolved:
+            if not next_bit.bit.value != data_bit_value:
+                # NOT Conflict! Rollback!
+                return True
+
+    if isinstance(next_bit, TreeBitOR):
+        if next_bit.a.resolved:
+            if next_bit.b.resolved:
+                if next_bit.a.value or next_bit.b.value != data_bit_value:
+                    # OR Conflict! Rollback!
+                    return True
             else:
-                # Rollback stack is empty! Algo is done
-                break
+                # B not resolved
+                if next_bit.a.value:
+                    if not data_bit_value:
+                        # OR Conflict! Rollback!
+                        return True
+        else:
+            # A not resolved
+            if next_bit.b.resolved:
+                if next_bit.b.value:
+                    if not data_bit_value:
+                        # OR Conflict! Rollback!
+                        return True
+
+    if isinstance(next_bit, TreeBitAND):
+        if next_bit.a.resolved:
+            if next_bit.b.resolved:
+                if next_bit.a.value and next_bit.b.value != data_bit_value:
+                    # AND Conflict! Rollback!
+                    return True
+            else:
+                # B not resolved
+                if not next_bit.a.value:
+                    if data_bit_value:
+                        # AND Conflict! Rollback!
+                        return True
+        else:
+            # A not resolved
+            if next_bit.b.resolved:
+                if not next_bit.b.value:
+                    if data_bit_value:
+                        # AND Conflict! Rollback!
+                        return True
+
+    if isinstance(next_bit, TreeBitXOR):
+        if next_bit.a.resolved:
+            if next_bit.b.resolved:
+                if next_bit.a.value ^ next_bit.b.value != data_bit_value:
+                    # XOR Conflict! Rollback!
+                    return True
+    return False
+
+
+def check_and_try_resolve(next_bit: TreeBitAtom, data_bit_value: bool):
+    # extend queue
+    if isinstance(next_bit, TreeBitNOT):
+        return True, RouteItem(next_bit.bit, not data_bit_value)
+
+    if isinstance(next_bit, TreeBitOR):
+        if next_bit.a.resolved:
+            # B not resolved
+            if next_bit.a.value:
+                # BRANCH B, A is True, X is True
+                return False, None
+            else:
+                return True, RouteItem(next_bit.b, data_bit_value)
+        else:
+            # A not resolved
+            if next_bit.b.resolved:
+                if next_bit.b.value:
+                    # BRANCH A, B is True, X is True
+                    return False, None
+                else:
+                    return True, RouteItem(next_bit.a, data_bit_value)
+            else:
+                # A and B not resolved
+                # BRANCH A B
+                return False, None
+
+    if isinstance(next_bit, TreeBitAND):
+        if next_bit.a.resolved:
+            # B not resolved
+            if not next_bit.a.value:
+                # BRANCH B, A is False, X is False
+                return False, None
+            else:
+                return True, RouteItem(next_bit.b, data_bit_value)
+        else:
+            # A not resolved
+            if next_bit.b.resolved:
+                if not next_bit.b.value:
+                    # BRANCH A, B is False, X is False
+                    return False, None
+                else:
+                    return True, RouteItem(next_bit.a, data_bit_value)
+            else:
+                # A and B not resolved
+                # BRANCH A B
+                return False, None
+
+    if isinstance(next_bit, TreeBitXOR):
+        if next_bit.a.resolved:
+            # B not resolved
+            return True, RouteItem(next_bit.b, next_bit.a.value ^ data_bit_value)
+        else:
+            # A not resolved
+            if next_bit.b.resolved:
+                return True, RouteItem(next_bit.a, next_bit.b.value ^ data_bit_value)
+            else:
+                # BRANCH A B
+                return False, None
+
+
+def branch():
+    pass
 
 
 def push_predict(
