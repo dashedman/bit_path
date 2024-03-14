@@ -1,9 +1,13 @@
-BitList = list[bool | None]
+BitList = list[bool | float]
 H0_START = 0x67452301
 H1_START = 0xEFCDAB89
 H2_START = 0x98BADCFE
 H3_START = 0x10325476
 H4_START = 0xC3D2E1F0
+
+
+def char_to_binary(char: str):
+    return f'{ord(char):08b}'
 
 
 def str_bits_to_list(str_bits: str) -> BitList:
@@ -17,6 +21,8 @@ def int32_to_list(x: int) -> BitList:
 def list_to_int(bits: BitList) -> int:
     num = 0
     for bit in bits:
+        if not isinstance(bit, bool):
+            raise Exception('Bad bit for converting to int!')
         num = (num << 1) | bit
     return num
 
@@ -35,7 +41,7 @@ def sha1(data):
     h4 = H4_START
 
     for char in data:
-        bytes_ += str_bits_to_list(f'{ord(char):08b}')
+        bytes_ += str_bits_to_list(char_to_binary(char))
 
     bits = bytes_ + [True]
     p_bits = bits.copy()
