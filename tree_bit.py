@@ -14,8 +14,8 @@ class RegistryItem:
     usages: set[TreeBitKey] = field(default_factory=set)
 
 
-# registry: dict[TreeBitKey, RegistryItem] = {}
-registry: dict[TreeBitKey, 'TreeBitAtom'] = {}
+registry: dict[TreeBitKey, RegistryItem] = {}
+# registry: dict[TreeBitKey, 'TreeBitAtom'] = {}
 
 
 class TreeBitAtom:
@@ -28,8 +28,8 @@ class TreeBitAtom:
 
         if self.key in registry:
             raise Exception(f'Registry is not empty for key {self.key}')
-        registry[self.key] = self
-        # registry[self.key] = RegistryItem(self)
+        # registry[self.key] = self
+        registry[self.key] = RegistryItem(self)
 
     def __hash__(self):
         return hash(self.key)
@@ -57,22 +57,22 @@ class TreeBitAtom:
     def with_resolve(cls, *operands):
         raise NotImplementedError
 
-    @classmethod
-    def with_registry(cls, *operands):
-        return registry.get(cls.get_key(*operands)) or cls(*operands)
-
     # @classmethod
-    # def with_registry(cls, *operands: 'TreeBitAtom', value: float | bool | None = None):
-    #     from_registry = registry.get(cls.get_key(*operands))
-    #     if from_registry:
-    #         result_bit = from_registry.bit
-    #     else:
-    #         result_bit = cls(*operands, value=value)
-    #
-    #     for operand in operands:
-    #         registry[operand.key].usages.add(result_bit.key)
-    #
-    #     return result_bit
+    # def with_registry(cls, *operands):
+    #     return registry.get(cls.get_key(*operands)) or cls(*operands)
+
+    @classmethod
+    def with_registry(cls, *operands: 'TreeBitAtom', value: float | bool | None = None):
+        from_registry = registry.get(cls.get_key(*operands))
+        if from_registry:
+            result_bit = from_registry.bit
+        else:
+            result_bit = cls(*operands, value=value)
+
+        for operand in operands:
+            registry[operand.key].usages.add(result_bit.key)
+
+        return result_bit
 
     @classmethod
     def from_bit_value(cls, value: float | bool, name: str):
@@ -309,14 +309,16 @@ class UInt32Tree:
         return cls.from_bitlist(int32_to_list(num), name)
 
     def to_int(self):
-        if any(bit.value is None for bit in self.bits):
+        if not all(bit.resolved for bit in self.bits):
             raise Exception('Cannot convert to int: unresolved bits')
         return list_to_int([bit.value for bit in self.bits])
 
     def rol(self, steps: int):
+        """ roll right """
         return UInt32Tree(self.bits[steps:] + self.bits[:steps])
 
     def rev_rol(self, steps: int):
+        """ roll left """
         return UInt32Tree(self.bits[-steps:] + self.bits[:-steps])
 
     def set_exits(self, exits: 'UInt32Tree'):

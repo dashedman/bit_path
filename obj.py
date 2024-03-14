@@ -103,14 +103,13 @@ def sha1(data):
                 f = b ^ c ^ d
                 k = 0xCA62C1D6
 
-
-            print(i, rol(a, 5), f, e, k, list_to_int(w[i]))
-            print(
-                i,
-                (rol(a, 5) + f) & 0xffffffff,
-                (((rol(a, 5) + f) & 0xffffffff) + e) & 0xffffffff,
-                (((((rol(a, 5) + f) & 0xffffffff) + e) & 0xffffffff) + k) & 0xffffffff
-            )
+            # print(i, rol(a, 5), f, e, k, list_to_int(w[i]))
+            # print(
+            #     i,
+            #     (rol(a, 5) + f) & 0xffffffff,
+            #     (((rol(a, 5) + f) & 0xffffffff) + e) & 0xffffffff,
+            #     (((((rol(a, 5) + f) & 0xffffffff) + e) & 0xffffffff) + k) & 0xffffffff
+            # )
             temp = (
                         (
                             (rol(a, 5) + f & 0xffffffff)

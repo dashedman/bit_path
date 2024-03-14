@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import networkx
 
 from obj import H0_START, H1_START, H2_START, H3_START, H4_START, BitList, str_bits_to_list, chunks, \
-    list_to_int, char_to_binary
+    list_to_int, char_to_binary, sha1 as simple_sha1
 import pushers.presumptive as ppr
 from tree_bit import TreeBitAtom, UInt32Tree, registry, TreeBit, TreeBitNOT, TreeBitOperator, init_registry
 
@@ -66,7 +66,7 @@ def sha1(data: str):
 def sha1_rev(sha: str, limit_length: int, used_symbols: list[str]):
     init_sha1_state()
     probability_mask = calc_symbols_mask(used_symbols)
-    print(f'Probability mask: {probability_mask}\nFor charset: "{''.join(used_symbols)}"')
+    print(f'Probability mask: {probability_mask}\nFor charset: "{"".join(used_symbols)}"')
 
     w, *predicted_h = forward_move(limit_length, probability_mask)
     backward_move(sha, predicted_h, w)
@@ -83,8 +83,11 @@ def forward_move(limit_length: int, probability_mask: list[float]):
 
 def algo(bits: BitList):
     from tree_bit import UINT_ZERO
-    # MAX_W = 80    # default
-    MAX_W = 0
+    MAX_W = 80    # default
+    # MAX_W = 0
+
+    if MAX_W != 80:
+        print('WARNING!!! MAX_W is not equal to 80! SHA1 algo is incorrect!')
 
     bits += [True]
     p_bits = bits.copy()
@@ -494,7 +497,10 @@ def test_sha():
     # used_symbols = list(string.printable)
     print(f'Word: "{word}", len: {len(word)}')
     word_sha1 = sha1(word)
+    real_sha1 = simple_sha1(word)
     print(f'Word SHA1: {word_sha1}')
+    print(f'Real SHA1: {real_sha1}')
+    assert word_sha1 == real_sha1
     print(f'Real Bits Scan (RBS): {real_bits_scan}')
     print(f'RBS X counter: {real_bits_scan.count("X")}')
 
@@ -503,9 +509,9 @@ def test_sha():
 
 
 def test_push():
-    from tree_bit import ZERO_BIT
-
     init_sha1_state()
+
+    from tree_bit import ZERO_BIT
 
     input_bits = [
         TreeBit(0.9, 'ib_1'),
@@ -519,6 +525,36 @@ def test_push():
     ppr.PredictsPusher().push_presumptive_predict(exit_bits, exit_values, input_bits)
 
 
+def test_operators():
+    init_sha1_state()
+    from tree_bit import ZERO_BIT, ONE_BIT, UINT_ZERO
+
+    assert (ZERO_BIT | ZERO_BIT) == ZERO_BIT
+    assert (ZERO_BIT | ONE_BIT) == ONE_BIT
+    assert (ONE_BIT | ZERO_BIT) == ONE_BIT
+    assert (ONE_BIT | ONE_BIT) == ONE_BIT
+
+    assert (ZERO_BIT & ZERO_BIT) == ZERO_BIT
+    assert (ZERO_BIT & ONE_BIT) == ZERO_BIT
+    assert (ONE_BIT & ZERO_BIT) == ZERO_BIT
+    assert (ONE_BIT & ONE_BIT) == ONE_BIT
+
+    assert (ZERO_BIT ^ ZERO_BIT) == ZERO_BIT
+    assert (ZERO_BIT ^ ONE_BIT) == ONE_BIT
+    assert (ONE_BIT ^ ZERO_BIT) == ONE_BIT
+    assert (ONE_BIT ^ ONE_BIT) == ZERO_BIT
+
+    assert (~ZERO_BIT) == ONE_BIT
+    assert (~ONE_BIT) == ZERO_BIT
+
+    assert UINT_ZERO.to_int() == 0
+    assert UInt32Tree.from_int(123, 'ott').to_int() == 123
+    assert (UInt32Tree.from_int(1, 'one') + UInt32Tree.from_int(2, 'two')).to_int() == 3
+    assert UInt32Tree.from_int(1, 'one2').rol(1).to_int() == 2
+    assert UInt32Tree.from_int(1, 'one3').rol(2).to_int() == 4
+
+
 if __name__ == '__main__':
+    # test_operators()
     test_sha()
     # test_push()
