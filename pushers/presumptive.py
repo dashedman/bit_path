@@ -375,3 +375,243 @@ class PredictsPusher:
                 else:
                     # BRANCH A B
                     return False, BranchingItem(next_bit.a, next_bit), BranchingItem(next_bit.b, next_bit)
+
+
+class PushResolveError(Exception):
+    pass
+
+
+class SnapshotUnresolvableError(Exception):
+    pass
+
+
+class PredictionSnapshot:
+    def __init__(self, predictor: 'PredictsPusherV2', predicted_value: bool):
+        self.predictor = predictor
+        self.is_alternative = False
+        self.resolved = set()
+        self.push_queue = deque()
+        self.predicted_value = predicted_value
+
+    def rollback(self):
+        # do rollback
+
+        # propagate snapshot with alternative value
+        if self.is_alternative:
+            raise SnapshotUnresolvableError
+        else:
+            self.is_alternative = True
+            self.predicted_value = not self.predicted_value
+
+    def check_after(self, bit: TreeBitAtom):
+        # check parents to push
+        assert bit.resolved
+        if isinstance(bit, TreeBitNOT):
+            if bit.bit.resolved:
+                assert bit.bit.value != bit.value
+            else:
+                self.push_queue.append((bit.bit, ~bit.value))
+
+        if isinstance(bit, TreeBitOR):
+            if bit.a.resolved:
+                if bit.b.resolved:
+                    assert bit.value == bit.a.value or bit.b.value
+                else:
+                    # B not resolved
+                    if bit.a.value:
+                        # BRANCH B, A is True, X is True
+                        self.proposition_queue.append(bit.a)
+                    else:
+                        self.push_queue.append((bit.b, bit.value))
+            else:
+                # A not resolved
+                if bit.b.resolved:
+                    if bit.b.value:
+                        # BRANCH A, B is True, X is True
+                        self.proposition_queue.append(bit.b)
+                    else:
+                        self.push_queue.append((bit.a, bit.value))
+                else:
+                    # A and B not resolved
+                    # BRANCH A B
+                    self.proposition_queue.append(bit.a)
+                    self.proposition_queue.append(bit.b)
+
+        if isinstance(next_bit, TreeBitAND):
+            if next_bit.a.resolved:
+                # B not resolved
+                if not next_bit.a.value:
+                    # BRANCH B, A is False, X is False
+                    return False, BranchingItem(next_bit.b, next_bit)
+                else:
+                    return True, RouteItem(next_bit.b, data_bit_value)
+            else:
+                # A not resolved
+                if next_bit.b.resolved:
+                    if not next_bit.b.value:
+                        # BRANCH A, B is False, X is False
+                        return False, BranchingItem(next_bit.a, next_bit)
+                    else:
+                        return True, RouteItem(next_bit.a, data_bit_value)
+                else:
+                    # A and B not resolved
+                    # BRANCH A B
+                    return False, BranchingItem(next_bit.a, next_bit), BranchingItem(next_bit.b, next_bit)
+
+        if isinstance(next_bit, TreeBitXOR):
+            if next_bit.a.resolved:
+                # B not resolved
+                return True, RouteItem(next_bit.b, next_bit.a.value ^ data_bit_value)
+            else:
+                # A not resolved
+                if next_bit.b.resolved:
+                    return True, RouteItem(next_bit.a, next_bit.b.value ^ data_bit_value)
+                else:
+                    # BRANCH A B
+                    return False, BranchingItem(next_bit.a, next_bit), BranchingItem(next_bit.b, next_bit)
+
+
+class PredictsPusherV2:
+    def __init__(self):
+        self.snapshots_stack = list[PredictionSnapshot]()
+        self.resolved_in_snapshot = dict[TreeBitAtom, PredictionSnapshot]()
+
+        self.proposition_queue = set[TreeBitAtom]()
+
+    def add_proposition(self, bit: TreeBitAtom):
+        self.proposition_queue.add(bit)
+
+    def remove_from_proposition(self, bit: TreeBitAtom):
+        if bit in self.proposition_queue:
+            self.proposition_queue.remove(bit)
+
+    def push_presumptive_predict(
+            self,
+            predicted_h_bits: Iterable[TreeBitAtom],
+            h_end_bits: Iterable[TreeBitAtom],
+            result_bits: list[TreeBitAtom],
+    ):
+
+        # Initialisation
+        base_snapshot = PredictionSnapshot(self, False)
+        self.snapshots_stack.append(base_snapshot)
+
+        for p_bit, e_bit in zip(predicted_h_bits, h_end_bits):
+            assert e_bit.resolved
+            if p_bit.resolved:
+                # skip
+                assert p_bit.value == e_bit.value
+
+            base_snapshot.check_after(p_bit)
+            print(f'[{hash(p_bit)}] PQ({len(self.propagate_queue)}) < [INIT]')
+
+        while True:
+            # check node to predict
+            # do snapshot
+            # Predict
+            # Push n check
+            # on error
+            # rollback snapshot
+            # if not alternative, predict alternative
+            # else
+            # exit snapshot
+            # rollback prev snapshot
+            # on success
+            # next predicting
+            scanned_bits = ''.join(str(int(bit.value)) if bit.resolved else '?' for bit in result_bits)
+            print(f'!!!RESULT!!!: {scanned_bits}')
+            print(f'____real____: {real_bits_scan}')
+
+    @property
+    def current_snapshot(self):
+        return self.snapshots_stack[-1]
+
+    def pop_snapshot(self):
+        self.snapshots_stack.pop()
+
+    def push_n_check(self):
+        while self.push_queue:
+            # get to push from queue
+            push_bit, data_bit_value = self.push_queue.pop()
+            # push
+            try:
+                self.check_and_try_resolve(push_bit, data_bit_value)
+            except PushResolveError:
+                # check conflicts
+                while self.snapshots_stack:
+                    try:
+                        self.current_snapshot.rollback()
+                    except SnapshotUnresolvableError:
+                        self.pop_snapshot()
+                    else:
+                        break
+                else:
+                    raise Exception('Unreachable')
+
+                break
+            else:
+                # check and add parents to push
+                pass
+
+    def check_and_try_resolve(
+            self,
+            next_bit: TreeBitAtom,
+            data_bit_value: bool,
+    ):
+        # extend queue
+        if isinstance(next_bit, TreeBitNOT):
+            return True, RouteItem(next_bit.bit, not data_bit_value)
+
+        if isinstance(next_bit, TreeBitOR):
+            if next_bit.a.resolved:
+                # B not resolved
+                if next_bit.a.value:
+                    # BRANCH B, A is True, X is True
+                    return False, BranchingItem(next_bit.b, next_bit)
+                else:
+                    return True, RouteItem(next_bit.b, data_bit_value)
+            else:
+                # A not resolved
+                if next_bit.b.resolved:
+                    if next_bit.b.value:
+                        # BRANCH A, B is True, X is True
+                        return False, BranchingItem(next_bit.a, next_bit)
+                    else:
+                        return True, RouteItem(next_bit.a, data_bit_value)
+                else:
+                    # A and B not resolved
+                    # BRANCH A B
+                    return False, BranchingItem(next_bit.a, next_bit), BranchingItem(next_bit.b, next_bit)
+
+        if isinstance(next_bit, TreeBitAND):
+            if next_bit.a.resolved:
+                # B not resolved
+                if not next_bit.a.value:
+                    # BRANCH B, A is False, X is False
+                    return False, BranchingItem(next_bit.b, next_bit)
+                else:
+                    return True, RouteItem(next_bit.b, data_bit_value)
+            else:
+                # A not resolved
+                if next_bit.b.resolved:
+                    if not next_bit.b.value:
+                        # BRANCH A, B is False, X is False
+                        return False, BranchingItem(next_bit.a, next_bit)
+                    else:
+                        return True, RouteItem(next_bit.a, data_bit_value)
+                else:
+                    # A and B not resolved
+                    # BRANCH A B
+                    return False, BranchingItem(next_bit.a, next_bit), BranchingItem(next_bit.b, next_bit)
+
+        if isinstance(next_bit, TreeBitXOR):
+            if next_bit.a.resolved:
+                # B not resolved
+                return True, RouteItem(next_bit.b, next_bit.a.value ^ data_bit_value)
+            else:
+                # A not resolved
+                if next_bit.b.resolved:
+                    return True, RouteItem(next_bit.a, next_bit.b.value ^ data_bit_value)
+                else:
+                    # BRANCH A B
+                    return False, BranchingItem(next_bit.a, next_bit), BranchingItem(next_bit.b, next_bit)

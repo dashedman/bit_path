@@ -323,6 +323,7 @@ class UInt32Tree:
 
     def set_exits(self, exits: 'UInt32Tree'):
         for self_bit, exit_bit in zip(self.bits, exits.bits):
+            self_bit: TreeBit
             self_bit.set_exit(exit_bit)
 
 

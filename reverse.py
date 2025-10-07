@@ -1,5 +1,5 @@
-import matplotlib.pyplot as plt
 import networkx
+import plotly
 
 from obj import H0_START, H1_START, H2_START, H3_START, H4_START, BitList, str_bits_to_list, chunks, \
     list_to_int, char_to_binary, sha1 as simple_sha1
@@ -66,7 +66,10 @@ def sha1(data: str):
 def sha1_rev(sha: str, limit_length: int, used_symbols: list[str]):
     init_sha1_state()
     probability_mask = calc_symbols_mask(used_symbols)
-    print(f'Probability mask: {probability_mask}\nFor charset: "{"".join(used_symbols)}"')
+    print(
+        f'Probability mask: {probability_mask}\n'
+        f'For charset: "{"".join(used_symbols)}"'
+    )
 
     w, *predicted_h = forward_move(limit_length, probability_mask)
     backward_move(sha, predicted_h, w)
@@ -172,7 +175,10 @@ def backward_move(
     )
     result_bits = [bit for word in w[:16] for bit in word.bits]
     # scan_lines(predicted_h)
-    draw_graph(predicted_h=predicted_h, usages_start_bits=result_bits)
+    draw_graph(
+        predicted_h=predicted_h,
+        usages_start_bits=result_bits,
+    )
     # ppr.PredictsPusher().push_presumptive_predict(predicted_h, h_end, result_bits)
 
 
@@ -321,6 +327,7 @@ def draw_graph_parents(
         edgedata["color"]
         for _, _, edgedata in graph.edges(data=True)
     ]
+    return _graph_to_plotly(graph, pos, node_color, edge_color)
     plt.figure(figsize=sizes)
     networkx.draw_networkx(
         graph,
@@ -404,28 +411,83 @@ def draw_graph_usages(
         edgedata["color"]
         for _, _, edgedata in graph.edges(data=True)
     ]
-    plt.figure(figsize=sizes)
-    networkx.draw_networkx(
-        graph,
-        pos=pos,
-        with_labels=False,
-        node_size=10,
-        node_color=node_color,
-        edge_color=edge_color,
-        width=0.2,
-        arrowsize=2,
-        node_shape='.',
-        labels=labels,
-        font_size=2,
-    )
+    return _graph_to_plotly(graph, pos, node_color, edge_color)
+    # plt.figure(figsize=sizes)
+    # networkx.draw_networkx(
+    #     graph,
+    #     pos=pos,
+    #     with_labels=False,
+    #     node_size=10,
+    #     node_color=node_color,
+    #     edge_color=edge_color,
+    #     width=0.2,
+    #     arrowsize=2,
+    #     node_shape='.',
+    #     labels=labels,
+    #     font_size=2,
+    # )
+    #
+    # text = networkx.draw_networkx_labels(graph, labels=labels, pos=pos, font_size=2)
+    # for t in text.values():
+    #     t.set_rotation(45)
+    # plt.show()
+    # print('Saving to file')
+    # plt.savefig("bits_tree_usages.png", dpi=500, bbox_inches='tight')
+    # print('End draw_graph_usages')
 
-    text = networkx.draw_networkx_labels(graph, labels=labels, pos=pos, font_size=2)
-    for t in text.values():
-        t.set_rotation(45)
-    plt.show()
-    print('Saving to file')
-    plt.savefig("bits_tree_usages.png", dpi=500, bbox_inches='tight')
-    print('End draw_graph_usages')
+
+def _graph_to_plotly(
+        graph: networkx.DiGraph,
+        pos,
+        node_color,
+        edge_color,
+):
+    edge_x = []
+    edge_y = []
+
+    for edge in graph.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.append(x0)
+        edge_x.append(x1)
+        edge_x.append(None)
+        edge_y.append(y0)
+        edge_y.append(y1)
+        edge_y.append(None)
+
+    edge_trace = plotly.graph_objects.Scatter(
+        x = edge_x, y = edge_y,
+        line = dict(width = 0.5, color = '#888'),
+        hoverinfo = 'none',
+        mode = 'lines')
+
+    node_x = []
+    node_y = []
+
+    for node in graph.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+
+    node_trace = plotly.graph_objects.Scatter(
+        x = node_x, y = node_y,
+        mode = 'markers',
+        hoverinfo = 'text',
+        marker = dict(
+            color = [],
+            size = 10
+        ),
+        line_width = 2)
+
+    fig = plotly.graph_objects.Figure(data=[edge_trace, node_trace],
+                    layout=plotly.graph_objects.Layout(
+                        title='<br>Тестовый граф для NTA',
+                        # titlefont_size = 16,
+                        showlegend = False,
+                        xaxis=dict(showgrid = False, zeroline = False, showticklabels = False),
+                        yaxis=dict(showgrid = False, zeroline = False, showticklabels = False))
+                    )
+    fig.show()
 
 
 def scan_bits(result_bits: list[TreeBitAtom]):
@@ -514,15 +576,23 @@ def test_push():
     from tree_bit import ZERO_BIT
 
     input_bits = [
-        TreeBit(0.9, 'ib_1'),
-        TreeBit(0.1, 'ib_2'),
+        TreeBit(0.5, 'ib_1'),
+        TreeBit(0.5, 'ib_2'),
+        TreeBit(0.5, 'ib_3'),
+        TreeBit(0.5, 'ib_4'),
+        TreeBit(0.5, 'ib_5'),
     ]
+
+    exit_bit = input_bits[0]
+    for input_bit in input_bits[1:]:
+        exit_bit = exit_bit ^ input_bit
     exit_bits = [
-        ~(input_bits[0] ^ input_bits[1])
+        ~exit_bit
     ]
+
     exit_values = [ZERO_BIT]
     draw_graph(predicted_h_bits=exit_bits, sizes=(10, 10))
-    ppr.PredictsPusher().push_presumptive_predict(exit_bits, exit_values, input_bits)
+    ppr.PredictsPusherV2().push_presumptive_predict(exit_bits, exit_values, input_bits)
 
 
 def test_operators():
@@ -556,5 +626,5 @@ def test_operators():
 
 if __name__ == '__main__':
     # test_operators()
-    test_sha()
-    # test_push()
+    # test_sha()
+    test_push()

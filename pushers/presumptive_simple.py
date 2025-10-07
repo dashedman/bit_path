@@ -1,5 +1,5 @@
 from collections import deque, Counter
-from typing import Iterable
+from typing import Iterable, Hashable
 
 from sortedcontainers import SortedList
 
@@ -22,8 +22,6 @@ class PredictsPusher:
             self,
             predicted_h_bits: Iterable[TreeBitAtom],
             h_end_bits: Iterable[TreeBitAtom],
-            # predicted_h: Iterable[UInt32Tree],
-            # h_end: Iterable[UInt32Tree],
             result_bits: list[TreeBitAtom],
     ):
 
