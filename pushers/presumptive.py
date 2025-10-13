@@ -5,7 +5,7 @@ from sortedcontainers import SortedList
 
 from pushers.base import RouteItem, RollbackItem, BranchingItem
 from reverse import print_tree, real_bits_scan
-from tree_bit import TreeBitAtom, TreeBit, TreeBitNOT, TreeBitOR, TreeBitAND, TreeBitXOR
+from tree_bit.base import TreeBitAtom, TreeBit, TreeBitNOT, TreeBitOR, TreeBitAND, TreeBitXOR
 
 
 class PredictsPusher:

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from tree_bit import TreeBitAtom
+from tree_bit.base import TreeBitAtom
 
 
 @dataclass

@@ -1,10 +1,16 @@
+import string
+from collections import Counter
+
 import networkx
 import plotly
 
 from obj import H0_START, H1_START, H2_START, H3_START, H4_START, BitList, str_bits_to_list, chunks, \
     list_to_int, char_to_binary, sha1 as simple_sha1
 import pushers.presumptive as ppr
-from tree_bit import TreeBitAtom, UInt32Tree, registry, TreeBit, TreeBitNOT, TreeBitOperator, init_registry
+from tree_bit.base import TreeBitAtom, UInt32Tree, registry, TreeBit, TreeBitNOT, TreeBitOperator, init_registry, \
+    TreeBitOR, TreeBitAND, TreeBitXOR
+from tree_bit.dnf import get_sdnf_for_bit, minimize_dnf, str_dnf
+from tree_bit.tools import extract_base_bits
 
 OperationsCounter = dict[tuple, int]
 real_bits_scan: str = ''
@@ -72,6 +78,31 @@ def sha1_rev(sha: str, limit_length: int, used_symbols: list[str]):
     )
 
     w, *predicted_h = forward_move(limit_length, probability_mask)
+
+    # unpack hash bits
+    hash_bits = []
+    for h in predicted_h:
+        for bit in h.bits:
+            hash_bits.append(bit)
+
+    print('Hash bits info: Base Count')
+    for idx, hash_bit in enumerate(hash_bits, start=1):
+        base_bits = extract_base_bits(hash_bit)
+        counter = Counter(base_bits)
+        filtered = filter(lambda kv: kv[1] > 1, counter.most_common())
+        print(f'{idx}. ({len(counter)}, {counter.total()}) {dict(filtered)} {[b.name for b in base_bits]}')
+        sdnf = get_sdnf_for_bit(hash_bit, True)
+
+        # simple testing
+        # sdnf = set(list(sdnf)[:5])
+
+        print(str_dnf(sdnf))
+        mdnf = minimize_dnf(sdnf)
+        print(str_dnf(mdnf))
+        # draw_bit_tree(hash_bit)
+        # draw_graph_usages(base_bits)
+        print()
+
     backward_move(sha, predicted_h, w)
     return None
 
@@ -85,7 +116,7 @@ def forward_move(limit_length: int, probability_mask: list[float]):
 
 
 def algo(bits: BitList):
-    from tree_bit import UINT_ZERO
+    from tree_bit.base import UINT_ZERO
     MAX_W = 80    # default
     # MAX_W = 0
 
@@ -244,7 +275,16 @@ def draw_graph_parents(
     print('Start draw_graph_parents')
     graph = networkx.DiGraph()
     labels = {}
-    subset_color = [
+
+    node_color_map: dict[type[TreeBitAtom], str] = {
+        TreeBit: "red",
+        TreeBitNOT: 'blue',
+        TreeBitOR: "orange",
+        TreeBitAND: 'yellow', #"olive",
+        TreeBitXOR: "green",
+    }
+
+    subset_tone = [
         "red",
         "orange",
         "olive",
@@ -258,16 +298,16 @@ def draw_graph_parents(
     counter = 1
 
     if predicted_h:
+        predicted_h_bits = []
         for h in predicted_h:
             for bit in h.bits:
-                curr_line.append(bit)
-                graph.add_node(bit.key, subset=counter)
-                labels[bit.key] = bit.label
-    else:
-        for bit in predicted_h_bits:
-            curr_line.append(bit)
-            graph.add_node(bit.key, subset=counter)
-            labels[bit.key] = bit.label
+                predicted_h_bits.append(bit)
+
+    for bit in predicted_h_bits:
+        curr_line.append(bit)
+        color = node_color_map[type(bit)]
+        graph.add_node(bit.key, subset=counter, color=color)
+        labels[bit.key] = bit.label
 
     used_bits = set(curr_line)
     while curr_line and counter:
@@ -277,96 +317,72 @@ def draw_graph_parents(
         for bit in curr_line:
             if isinstance(bit, TreeBit):
                 continue
-            if isinstance(bit, TreeBitNOT):
-                if bit.bit not in used_bits:
-                    next_line.append(bit.bit)
-                    used_bits.add(bit.bit)
-                    graph.add_node(bit.bit.key, subset=counter)
-                    labels[bit.bit.key] = bit.bit.label
+
+            for parent_bit in bit.parents:
+                color = node_color_map[type(parent_bit)]
+                if parent_bit not in used_bits:
+                    next_line.append(parent_bit)
+                    used_bits.add(parent_bit)
+                    graph.add_node(parent_bit.key, subset=counter, color=color)
+                    labels[parent_bit.key] = parent_bit.label
                 else:
-                    if not bit.bit.resolved:
-                        used_prev += 1
-                graph.add_edge(bit.key, bit.bit.key, color=subset_color[counter % len(subset_color)])
-                graph[bit.key][bit.bit.key]['color'] = subset_color[counter % len(subset_color)]
-                continue
-            if isinstance(bit, TreeBitOperator):
-                if bit.a not in used_bits:
-                    next_line.append(bit.a)
-                    used_bits.add(bit.a)
-                    graph.add_node(bit.a.key, subset=counter)
-                    labels[bit.a.key] = bit.a.label
-                else:
-                    if not bit.a.resolved:
-                        used_prev += 1
-                if bit.b not in used_bits:
-                    next_line.append(bit.b)
-                    used_bits.add(bit.b)
-                    graph.add_node(bit.b.key, subset=counter)
-                    labels[bit.b.key] = bit.b.label
-                else:
-                    if not bit.b.resolved:
+                    if not parent_bit.resolved:
                         used_prev += 1
 
-                graph.add_edge(bit.key, bit.a.key)
-                graph.add_edge(bit.key, bit.b.key)
-                graph[bit.key][bit.a.key]['color'] = subset_color[counter % len(subset_color)]
-                graph[bit.key][bit.b.key]['color'] = subset_color[counter % len(subset_color)]
-                continue
-            raise Exception(f'Undefined TreeBit {type(bit)}')
+                graph.add_edge(bit.key, parent_bit.key, color=color)
 
         print(f'line {counter}: {len(curr_line)}, used on prev lines: {used_prev}')
         curr_line, next_line = next_line, []
+    print('Total graph', len(graph.nodes), len(graph.edges))
 
     print('Starting drawning')
+    node_color = {
+        n: data['color']
+        for n, data in graph.nodes(data=True)
+    }
+    edge_color = {
+        (n1, n2): edgedata["color"]
+        for n1, n2, edgedata in graph.edges(data=True)
+    }
     pos = networkx.multipartite_layout(graph, align='horizontal')
-    node_color = [
-        subset_color[data["subset"] % len(subset_color)]
-        for _, data in graph.nodes(data=True)
-    ]
-    edge_color = [
-        edgedata["color"]
-        for _, _, edgedata in graph.edges(data=True)
-    ]
     return _graph_to_plotly(graph, pos, node_color, edge_color)
-    plt.figure(figsize=sizes)
-    networkx.draw_networkx(
-        graph,
-        pos=pos,
-        with_labels=False,
-        node_size=10,
-        node_color=node_color,
-        edge_color=edge_color,
-        width=0.2,
-        arrowsize=2,
-        node_shape='.',
-        labels=labels,
-        font_size=2,
-    )
-
-    text = networkx.draw_networkx_labels(graph, labels=labels, pos=pos, font_size=2)
-    for t in text.values():
-        t.set_rotation(45)
-    plt.show()
-    print('Saving to file')
-    plt.savefig("bits_tree.png", dpi=500, bbox_inches='tight')
-    print('End draw_graph_parents')
+    # plt.figure(figsize=sizes)
+    # networkx.draw_networkx(
+    #     graph,
+    #     pos=pos,
+    #     with_labels=False,
+    #     node_size=10,
+    #     node_color=node_color,
+    #     edge_color=edge_color,
+    #     width=0.2,
+    #     arrowsize=2,
+    #     node_shape='.',
+    #     labels=labels,
+    #     font_size=2,
+    # )
+    #
+    # text = networkx.draw_networkx_labels(graph, labels=labels, pos=pos, font_size=2)
+    # for t in text.values():
+    #     t.set_rotation(45)
+    # plt.show()
+    # print('Saving to file')
+    # plt.savefig("bits_tree.png", dpi=500, bbox_inches='tight')
+    # print('End draw_graph_parents')
 
 
 def draw_graph_usages(
-        start_bits: list[TreeBitAtom] = None,
-        sizes=(60, 50)
+        start_bits: list[TreeBitAtom],
 ):
     print('Start draw_graph_usages')
     graph = networkx.DiGraph()
     labels = {}
-    subset_color = [
-        "red",
-        "orange",
-        "olive",
-        "green",
-        "blue",
-        "purple",
-    ]
+    node_color_map: dict[type[TreeBitAtom], str] = {
+        TreeBit: "red",
+        TreeBitNOT: 'blue',
+        TreeBitOR: "orange",
+        TreeBitAND: 'yellow', #"olive",
+        TreeBitXOR: "green",
+    }
 
     next_line = []
     curr_line = []
@@ -374,7 +390,7 @@ def draw_graph_usages(
 
     for bit in start_bits:
         curr_line.append(bit)
-        graph.add_node(bit.key, subset=counter)
+        graph.add_node(bit.key, subset=counter,color=node_color_map[type(bit)])
         labels[bit.key] = bit.label
 
     used_bits = set(curr_line)
@@ -389,29 +405,28 @@ def draw_graph_usages(
                 if bit_user not in used_bits:
                     next_line.append(bit_user)
                     used_bits.add(bit_user)
-                    graph.add_node(bit_user.key, subset=counter)
+                    graph.add_node(bit_user.key, subset=counter, color=node_color_map[type(bit_user)])
                     labels[bit_user.key] = bit_user.label
                 else:
                     if not bit_user.resolved:
                         used_prev += 1
 
                 graph.add_edge(bit.key, bit_user.key)
-                graph[bit.key][bit_user.key]['color'] = subset_color[counter % len(subset_color)]
 
         print(f'line {counter}: {len(curr_line)}, used on prev lines: {used_prev}')
         curr_line, next_line = next_line, []
 
     print('Starting drawning')
     pos = networkx.multipartite_layout(graph, align='horizontal')
-    node_color = [
-        subset_color[data["subset"] % len(subset_color)]
-        for _, data in graph.nodes(data=True)
-    ]
-    edge_color = [
-        edgedata["color"]
-        for _, _, edgedata in graph.edges(data=True)
-    ]
-    return _graph_to_plotly(graph, pos, node_color, edge_color)
+    node_color = {
+        n: data['color']
+        for n, data in graph.nodes(data=True)
+    }
+    # edge_color = [
+    #     edgedata["color"]
+    #     for _, _, edgedata in graph.edges(data=True)
+    # ]
+    return _graph_to_plotly(graph, pos, node_color, {})
     # plt.figure(figsize=sizes)
     # networkx.draw_networkx(
     #     graph,
@@ -436,11 +451,15 @@ def draw_graph_usages(
     # print('End draw_graph_usages')
 
 
+def draw_bit_tree(bit: TreeBitAtom):
+    draw_graph_parents(predicted_h_bits=[bit])
+
+
 def _graph_to_plotly(
         graph: networkx.DiGraph,
         pos,
-        node_color,
-        edge_color,
+        node_color_map,
+        edge_color_map,
 ):
     edge_x = []
     edge_y = []
@@ -456,37 +475,46 @@ def _graph_to_plotly(
         edge_y.append(None)
 
     edge_trace = plotly.graph_objects.Scatter(
-        x = edge_x, y = edge_y,
-        line = dict(width = 0.5, color = '#888'),
+        x=edge_x, y=edge_y,
+        line=dict(width = 0.5),
+        # marker=dict(line=dict(color=edge_color)),
         hoverinfo = 'none',
         mode = 'lines')
 
     node_x = []
     node_y = []
+    node_colors = []
 
     for node in graph.nodes():
         x, y = pos[node]
         node_x.append(x)
         node_y.append(y)
+        node_colors.append(node_color_map[node])
 
     node_trace = plotly.graph_objects.Scatter(
         x = node_x, y = node_y,
         mode = 'markers',
         hoverinfo = 'text',
+        # color=node_color,
         marker = dict(
-            color = [],
-            size = 10
+            color = node_colors,
+            size = 6
         ),
-        line_width = 2)
+        line_width = 1)
 
-    fig = plotly.graph_objects.Figure(data=[edge_trace, node_trace],
-                    layout=plotly.graph_objects.Layout(
-                        title='<br>Тестовый граф для NTA',
-                        # titlefont_size = 16,
-                        showlegend = False,
-                        xaxis=dict(showgrid = False, zeroline = False, showticklabels = False),
-                        yaxis=dict(showgrid = False, zeroline = False, showticklabels = False))
-                    )
+    fig = plotly.graph_objects.Figure(
+        data=[
+            edge_trace,
+            node_trace,
+        ],
+        layout=plotly.graph_objects.Layout(
+            title='<br>Тестовый граф для NTA',
+            # titlefont_size = 16,
+            showlegend = False,
+            xaxis=dict(showgrid = False, zeroline = False, showticklabels = False),
+            yaxis=dict(showgrid = False, zeroline = False, showticklabels = False)
+        )
+    )
     fig.show()
 
 
@@ -553,8 +581,8 @@ def print_tree(bits: list[TreeBitAtom]):
 
 def test_sha():
     word = '1'
-    used_symbols = ['1', '2']
-    # used_symbols = list(string.digits)
+    # used_symbols = ['1', '2']
+    used_symbols = list(string.digits)
     # used_symbols = list(string.hexdigits)
     # used_symbols = list(string.printable)
     print(f'Word: "{word}", len: {len(word)}')
@@ -573,7 +601,7 @@ def test_sha():
 def test_push():
     init_sha1_state()
 
-    from tree_bit import ZERO_BIT
+    from tree_bit.base import ZERO_BIT
 
     input_bits = [
         TreeBit(0.5, 'ib_1'),
@@ -597,7 +625,7 @@ def test_push():
 
 def test_operators():
     init_sha1_state()
-    from tree_bit import ZERO_BIT, ONE_BIT, UINT_ZERO
+    from tree_bit.base import ZERO_BIT, ONE_BIT, UINT_ZERO
 
     assert (ZERO_BIT | ZERO_BIT) == ZERO_BIT
     assert (ZERO_BIT | ONE_BIT) == ONE_BIT
@@ -626,5 +654,5 @@ def test_operators():
 
 if __name__ == '__main__':
     # test_operators()
-    # test_sha()
-    test_push()
+    test_sha()
+    # test_push()

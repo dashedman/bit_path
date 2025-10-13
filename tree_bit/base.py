@@ -90,6 +90,10 @@ class TreeBitAtom:
     def label(self):
         raise NotImplementedError
 
+    @property
+    def parents(self) -> tuple['TreeBitAtom', ...]:
+        raise NotImplementedError
+
     # @property
     # def usages(self):
     #     return registry[self.key].usages
@@ -110,6 +114,10 @@ class TreeBit(TreeBitAtom):
     @property
     def label(self):
         return f'{self.name} {self.value:.02f}'
+
+    @property
+    def parents(self):
+        return ()
 
     @classmethod
     def from_bitlist(cls, bit_list: BitList, name_prefix: str = ''):
@@ -158,6 +166,10 @@ class TreeBitNOT(TreeBitAtom):
         # Nothing is resolved
         return cls.with_registry(a, value=1.0 - a.value)
 
+    @property
+    def parents(self):
+        return (self.bit,)
+
 
 class TreeBitOperator(TreeBitAtom, ABC):
     cls_name: str = NotImplemented
@@ -180,6 +192,10 @@ class TreeBitOperator(TreeBitAtom, ABC):
     @classmethod
     def get_key(cls, a: TreeBitAtom, b: TreeBitAtom):
         return frozenset((a.key, b.key, cls.cls_name))
+
+    @property
+    def parents(self):
+        return self.a, self.b
 
 
 class TreeBitXOR(TreeBitOperator):
