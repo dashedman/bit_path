@@ -107,6 +107,9 @@ class TreeBit(TreeBitAtom):
         self.name = name
         super().__init__(value=value)
 
+    def __str__(self):
+        return f'TB({self.label})'
+
     @property
     def key(self):
         return self.name

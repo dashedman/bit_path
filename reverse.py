@@ -9,7 +9,7 @@ from obj import H0_START, H1_START, H2_START, H3_START, H4_START, BitList, str_b
 import pushers.presumptive as ppr
 from tree_bit.base import TreeBitAtom, UInt32Tree, registry, TreeBit, TreeBitNOT, TreeBitOperator, init_registry, \
     TreeBitOR, TreeBitAND, TreeBitXOR
-from tree_bit.dnf import get_sdnf_for_bit, minimize_dnf, str_dnf
+from tree_bit.dnf import Dnf
 from tree_bit.tools import extract_base_bits
 
 OperationsCounter = dict[tuple, int]
@@ -91,14 +91,14 @@ def sha1_rev(sha: str, limit_length: int, used_symbols: list[str]):
         counter = Counter(base_bits)
         filtered = filter(lambda kv: kv[1] > 1, counter.most_common())
         print(f'{idx}. ({len(counter)}, {counter.total()}) {dict(filtered)} {[b.name for b in base_bits]}')
-        sdnf = get_sdnf_for_bit(hash_bit, True)
+        sdnf = Dnf.get_sdnf_for_bit(hash_bit, True)
 
         # simple testing
         # sdnf = set(list(sdnf)[:5])
 
-        print(str_dnf(sdnf))
-        mdnf = minimize_dnf(sdnf)
-        print(str_dnf(mdnf))
+        # print(sdnf)
+        sdnf.minimize_dnf()
+        # print(sdnf)
         # draw_bit_tree(hash_bit)
         # draw_graph_usages(base_bits)
         print()
