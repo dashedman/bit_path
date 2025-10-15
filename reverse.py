@@ -1,15 +1,17 @@
 import string
+import time
 from collections import Counter
 
 import networkx
 import plotly
+from tqdm import tqdm
 
 from obj import H0_START, H1_START, H2_START, H3_START, H4_START, BitList, str_bits_to_list, chunks, \
     list_to_int, char_to_binary, sha1 as simple_sha1
 import pushers.presumptive as ppr
 from tree_bit.base import TreeBitAtom, UInt32Tree, registry, TreeBit, TreeBitNOT, TreeBitOperator, init_registry, \
     TreeBitOR, TreeBitAND, TreeBitXOR
-from tree_bit.dnf import Dnf
+from tree_bit.dnf import Dnf, DnfTable
 from tree_bit.tools import extract_base_bits
 
 OperationsCounter = dict[tuple, int]
@@ -69,7 +71,7 @@ def sha1(data: str):
     return '%08x%08x%08x%08x%08x' % (h0, h1, h2, h3, h4)
 
 
-def sha1_rev(sha: str, limit_length: int, used_symbols: list[str]):
+def sha1_rev(sha: str, limit_length: int, used_symbols: list[str], check_string: str | None = None):
     init_sha1_state()
     probability_mask = calc_symbols_mask(used_symbols)
     print(
@@ -85,26 +87,56 @@ def sha1_rev(sha: str, limit_length: int, used_symbols: list[str]):
         for bit in h.bits:
             hash_bits.append(bit)
 
+    hash_data = tuple(
+        bit
+        for index, offset in enumerate(range(0, 40, 8))
+        for bit in UInt32Tree.from_int(int(sha[offset:offset + 8], 16), f'h{index}').bits
+    )
+    hash_data_map = dict(zip(hash_bits, map(lambda bit: bit.value, hash_data)))
+    assert all(isinstance(v, bool) for v in hash_data_map.values())
+    print('hash_data_map:', ''.join(map(lambda b: str(int(b)), hash_data_map.values())))
+
     print('Hash bits info: Base Count')
+    merged_table: DnfTable | None = None
+    if check_string:
+        check_record = tuple(map(bool, map(int, check_string)))
+    else:
+        check_record = None
+
     for idx, hash_bit in enumerate(hash_bits, start=1):
         base_bits = extract_base_bits(hash_bit)
         counter = Counter(base_bits)
         filtered = filter(lambda kv: kv[1] > 1, counter.most_common())
         print(f'{idx}. ({len(counter)}, {counter.total()}) {dict(filtered)} {[b.name for b in base_bits]}')
-        sdnf = Dnf.get_sdnf_for_bit(hash_bit, True)
+        dnf_old = Dnf.get_sdnf_for_bit_old(hash_bit, hash_data_map[hash_bit])
+        dnf = Dnf.get_sdnf_for_bit(hash_bit)
 
-        # simple testing
-        # sdnf = set(list(sdnf)[:5])
+        mask_old = dnf_old.probe_dnf_mask()
+        mask = dnf.probe_dnf_mask()
+        assert mask_old == mask
 
-        # print(sdnf)
-        sdnf.minimize_dnf()
-        # print(sdnf)
-        # draw_bit_tree(hash_bit)
-        # draw_graph_usages(base_bits)
-        print()
+        dnf.minimize_dnf()
+        solves_table = dnf.calculate_dnf_true_table()
+        print('Dnf table:', len(solves_table))
+        if merged_table is None:
+            merged_table = solves_table
+        else:
+            merged_table = merged_table.merge_tables(solves_table)
+            print('Merged Dnf table:', len(merged_table))
 
-    backward_move(sha, predicted_h, w)
-    return None
+        if len(merged_table) == 0:
+            print('NO SOLVED!')
+            return None
+        elif len(merged_table) == 1:
+            print('SINGLE SOLVE FOUND')
+            break
+
+    for record in merged_table:
+        print('solve:', ''.join(map(str, map(int, record))))
+        if check_record:
+            print('check_record match:', check_record == record)
+        bytes_solve = bytes(map(list_to_int, chunks(record, 32)))
+        yield bytes_solve
 
 
 def forward_move(limit_length: int, probability_mask: list[float]):
@@ -581,10 +613,11 @@ def print_tree(bits: list[TreeBitAtom]):
 
 def test_sha():
     word = '1'
+    bit_word = ''.join(map(char_to_binary, word))
     # used_symbols = ['1', '2']
-    used_symbols = list(string.digits)
+    # used_symbols = list(string.digits)
     # used_symbols = list(string.hexdigits)
-    # used_symbols = list(string.printable)
+    used_symbols = list(string.printable)
     print(f'Word: "{word}", len: {len(word)}')
     word_sha1 = sha1(word)
     real_sha1 = simple_sha1(word)
@@ -594,8 +627,11 @@ def test_sha():
     print(f'Real Bits Scan (RBS): {real_bits_scan}')
     print(f'RBS X counter: {real_bits_scan.count("X")}')
 
-    word_reverse = sha1_rev(word_sha1, len(word), used_symbols=used_symbols)
-    print(f'Reverse: {word_reverse}')
+    start_time = time.perf_counter()
+    for word_reverse in sha1_rev(word_sha1, len(word), used_symbols=used_symbols, check_string=bit_word):
+        end_time = time.perf_counter()
+        print(f'Reverse: {word_reverse}')
+        print('Found in:', end_time - start_time)
 
 
 def test_push():

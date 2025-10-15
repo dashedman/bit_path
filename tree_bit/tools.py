@@ -1,6 +1,7 @@
 from collections import deque
 from typing import Iterable
 
+import tree_bit
 from tree_bit.base import TreeBitAtom, TreeBit, registry, TreeBitNOT, TreeBitXOR, TreeBitAND, TreeBitOR, TreeBitOperator
 
 
@@ -82,30 +83,96 @@ def solve_bits(
     secondary_solves: dict[TreeBitAtom, bool] = base_bits_inputs.copy()
 
     for bit_to_solve in solving_order:
-        if isinstance(bit_to_solve, TreeBitNOT):
-            secondary_solves[bit_to_solve] = not secondary_solves[bit_to_solve.bit]
-        elif isinstance(bit_to_solve, TreeBitOperator):
-            if bit_to_solve.a not in secondary_solves:
-                continue
-            if bit_to_solve.b not in secondary_solves:
-                continue
 
-            if isinstance(bit_to_solve, TreeBitXOR):
+        # 20-21 it/sec
+        match type(bit_to_solve):
+            case tree_bit.base.TreeBitNOT:
+                solve = not secondary_solves[bit_to_solve.bit]
+            case tree_bit.base.TreeBitXOR:
                 solve = secondary_solves[bit_to_solve.a] ^ secondary_solves[bit_to_solve.b]
-            elif isinstance(bit_to_solve, TreeBitOR):
+            case tree_bit.base.TreeBitOR:
                 solve = secondary_solves[bit_to_solve.a] or secondary_solves[bit_to_solve.b]
-            elif isinstance(bit_to_solve, TreeBitAND):
+            case tree_bit.base.TreeBitAND:
                 solve = secondary_solves[bit_to_solve.a] and secondary_solves[bit_to_solve.b]
-            else:
+            case _:
                 raise Exception('unreachable')
 
-            secondary_solves[bit_to_solve] = solve
+        secondary_solves[bit_to_solve] = solve
 
-        else:
-            raise Exception('unreachable')
+        # 13 it/sec
+        # if isinstance(bit_to_solve, TreeBitNOT):
+        #     secondary_solves[bit_to_solve] = not secondary_solves[bit_to_solve.bit]
+        # elif isinstance(bit_to_solve, TreeBitOperator):
+        #     if isinstance(bit_to_solve, TreeBitXOR):
+        #         solve = secondary_solves[bit_to_solve.a] ^ secondary_solves[bit_to_solve.b]
+        #     elif isinstance(bit_to_solve, TreeBitOR):
+        #         solve = secondary_solves[bit_to_solve.a] or secondary_solves[bit_to_solve.b]
+        #     elif isinstance(bit_to_solve, TreeBitAND):
+        #         solve = secondary_solves[bit_to_solve.a] and secondary_solves[bit_to_solve.b]
+        #     else:
+        #         raise Exception('unreachable')
+        #
+        #     secondary_solves[bit_to_solve] = solve
+        #
+        # else:
+        #     raise Exception('unreachable')
 
     return secondary_solves[solving_order[-1]]   # return result from last order
 
+
+def solve_bits_dfs(
+        secondary_solves: dict[TreeBitAtom, bool],
+        bit: TreeBitAtom,
+):
+
+    if solve := secondary_solves.get(bit) is not None:
+        # memorisation cache
+        return solve
+
+    # 2 it/s
+    # if isinstance(bit, TreeBitOperator):
+    #     if isinstance(bit, TreeBitXOR):
+    #         solve = dfs_func(bit.a) ^ dfs_func(bit.b)
+    #     elif isinstance(bit, TreeBitOR):
+    #         solve = dfs_func(bit.a) or dfs_func(bit.b)
+    #     elif isinstance(bit, TreeBitAND):
+    #         solve = dfs_func(bit.a) and dfs_func(bit.b)
+    #     else:
+    #         raise Exception('unreachable')
+    #
+    # elif isinstance(bit, TreeBitNOT):
+    #     solve = not dfs_func(bit.bit)
+    # else:
+    #     raise Exception('unreachable')
+
+    # 19 it/sec
+    match type(bit):
+        case tree_bit.base.TreeBitNOT:
+            solve = not solve_bits_dfs(secondary_solves, bit.bit)
+        case tree_bit.base.TreeBitXOR:
+            solve = solve_bits_dfs(secondary_solves, bit.a) ^ solve_bits_dfs(secondary_solves, bit.b)
+        case tree_bit.base.TreeBitOR:
+            solve = solve_bits_dfs(secondary_solves, bit.a) or solve_bits_dfs(secondary_solves, bit.b)
+        case tree_bit.base.TreeBitAND:
+            solve = solve_bits_dfs(secondary_solves, bit.a) and solve_bits_dfs(secondary_solves, bit.b)
+        case _:
+            raise Exception('unreachable')
+
+    # 13 it/sec
+    # match type(bit).__name__:
+    #     case tree_bit.base.TreeBitNOT.__name__:
+    #         solve = not dfs_func(bit.bit)
+    #     case tree_bit.base.TreeBitXOR.__name__:
+    #         solve = dfs_func(bit.a) ^ dfs_func(bit.b)
+    #     case tree_bit.base.TreeBitOR.__name__:
+    #         solve = dfs_func(bit.a) or dfs_func(bit.b)
+    #     case tree_bit.base.TreeBitAND.__name__:
+    #         solve = dfs_func(bit.a) and dfs_func(bit.b)
+    #     case _:
+    #         raise Exception('unreachable')
+
+    secondary_solves[bit] = solve
+    return solve
 
 def get_ancestors_gen(bit: TreeBitAtom):
     # BFS
