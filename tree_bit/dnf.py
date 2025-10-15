@@ -1,4 +1,5 @@
 import itertools
+from ast import Index
 from collections import defaultdict
 from typing import Counter, Self
 
@@ -36,7 +37,7 @@ class Dnf:
         self.conjuncts: DNF = dnf or set()
         self._terms: list[DNF_TERM] | None = None
         self._full_terms = None
-        self._dnf_table = None
+        self.solved = None if self.conjuncts else True
 
     def __len__(self):
         return len(self.conjuncts)
@@ -104,113 +105,148 @@ class Dnf:
 
     @classmethod
     def get_sdnf_for_bit(cls, exit_bit: TreeBitAtom):
+        dnf_for_bit = dict[TreeBitAtom, Dnf]()
+        counter = 0
+        depth_counter = 0
 
-        def merge_2_cnj(conj1: CONJUNCT, conj2: CONJUNCT) -> CONJUNCT | None:
-            for term, is_neg in conj1:
-                if (term, not is_neg) in conj2:
-                    return None
-            return conj1 | conj2
+        def dnf_by_bit_dfs(
+            bit: TreeBitAtom,
+        ) -> Dnf:
+            nonlocal depth_counter
+            if (dnf := dnf_for_bit.get(bit)) is not None:
+                # memorisation cache
+                return dnf
 
-        def merge_2_dnf(dnf1: DNF, dnf2: DNF):
-            merged_dnf = set()
-            for conj1 in dnf1:
-                for conj2 in dnf2:
-                    merged_conj = merge_2_cnj(conj1, conj2)
-                    if merged_conj:
-                        merged_dnf.add(merged_conj)
-            return merged_dnf
-
-        sub_heap_for_bit = {}
-        def get_logical_heap(bit: TreeBitAtom):
-            if bit in sub_heap_for_bit:
-                return sub_heap_for_bit[bit]
-
+            depth_counter += 1
+            # 19 it/sec
             match type(bit):
-                case tree_bit.base.TreeBit:
-                    heap = (LogicalIdentity, bit)
                 case tree_bit.base.TreeBitNOT:
-                    heap = (LogicalNot, get_logical_heap(bit.bit))
-                case tree_bit.base.TreeBitAND:
-                    heap = (LogicalAnd, get_logical_heap(bit.a), get_logical_heap(bit.b))
-                case tree_bit.base.TreeBitOR:
-                    heap = (LogicalOr, get_logical_heap(bit.a), get_logical_heap(bit.b))
+                    dnf = ~dnf_by_bit_dfs(bit.bit)
                 case tree_bit.base.TreeBitXOR:
-                    heap = (
-                        LogicalOr,
-                        (
-                            LogicalAnd,
-                            (LogicalNot, get_logical_heap(bit.a)),
-                            get_logical_heap(bit.b)
-                        ),
-                        (
-                            LogicalAnd,
-                            get_logical_heap(bit.a),
-                            (LogicalNot, get_logical_heap(bit.b))
-                        )
-                    )
-            sub_heap_for_bit[bit] = heap
-            return heap
+                    dnf = dnf_by_bit_dfs(bit.a) ^ dnf_by_bit_dfs(bit.b)
+                case tree_bit.base.TreeBitOR:
+                    dnf = dnf_by_bit_dfs(bit.a) | dnf_by_bit_dfs(bit.b)
+                case tree_bit.base.TreeBitAND:
+                    dnf = dnf_by_bit_dfs(bit.a) & dnf_by_bit_dfs(bit.b)
+                case tree_bit.base.TreeBit:
+                    dnf = cls.from_explicit_bit(bit)
+                case _:
+                    raise Exception('unreachable')
 
-        logical_heap = get_logical_heap(exit_bit)
-        del sub_heap_for_bit
+            if not isinstance(dnf, Dnf):
+                raise Exception()
+            dnf_for_bit[bit] = dnf
+            print(counter, depth_counter, len(dnf_for_bit), len(dnf), len(dnf.terms))
+            depth_counter -= 1
+            return dnf
 
-        dnf_for_heap = {}
-        def logical_heap_to_dnf(heap_head) -> DNF:
-            heap_op = heap_head[0]
-            match heap_op:
-                case 0: # Identity
-                    # simple DNF
-                    return {frozenset({(heap_head[1], False)})}
-                case 1: # Not
-                    next_heap = heap_head[1]
-                    next_command = next_heap[0]
-                    next_args_len = len(next_heap) - 1
-                    if next_args_len == 1:
-                        next_arg = next_heap[1]
-                        if next_command == 0:   # not one
-                            return {frozenset({(heap_head[1], True)})}
-                        elif next_command == 1:   # not not
-                            return logical_heap_to_dnf(next_arg)
-                        else:
-                            raise Exception('Unreachble')
-                    else:
-                        if next_command == 2:
-                            new_command = 3
-                        else:
-                            new_command = 2
-                        next_args = next_heap[1:]
-                        return logical_heap_to_dnf((
-                            new_command,
-                            *((LogicalNot, arg) for arg in next_args)
-                        ))
-                case 2: # and
-                    heap_args = heap_head[1:]
-                    dnf_from_args = []
-                    for heap_arg in heap_args:
-                        dnf_from_args.append(logical_heap_to_dnf(heap_arg))
+        return dnf_by_bit_dfs(exit_bit)
 
-                    merged_dnf = dnf_from_args.pop()
-                    for dnf in dnf_from_args:
-                        merged_dnf = merge_2_dnf(merged_dnf, dnf)
-                    return merged_dnf
-                case 3: # or
-                    heap_args = heap_head[1:]
-                    dnf_from_args = []
-                    for heap_arg in heap_args:
-                        dnf_from_args.append(logical_heap_to_dnf(heap_arg))
+    @classmethod
+    def from_explicit_bit(cls, bit: TreeBit):
+        return cls({frozenset(((bit, False),))})
 
-                    merged_dnf = dnf_from_args.pop()
-                    for dnf in dnf_from_args:
-                        merged_dnf |= dnf
-                    return merged_dnf
+        # sub_heap_for_bit = {}
+        # def get_logical_heap(bit: TreeBitAtom):
+        #     if bit in sub_heap_for_bit:
+        #         return sub_heap_for_bit[bit]
+        #
+        #     match type(bit):
+        #         case tree_bit.base.TreeBit:
+        #             heap = (LogicalIdentity, bit)
+        #         case tree_bit.base.TreeBitNOT:
+        #             heap = (LogicalNot, get_logical_heap(bit.bit))
+        #         case tree_bit.base.TreeBitAND:
+        #             heap = (LogicalAnd, get_logical_heap(bit.a), get_logical_heap(bit.b))
+        #         case tree_bit.base.TreeBitOR:
+        #             heap = (LogicalOr, get_logical_heap(bit.a), get_logical_heap(bit.b))
+        #         case tree_bit.base.TreeBitXOR:
+        #             heap = (
+        #                 LogicalOr,
+        #                 (
+        #                     LogicalAnd,
+        #                     (LogicalNot, get_logical_heap(bit.a)),
+        #                     get_logical_heap(bit.b)
+        #                 ),
+        #                 (
+        #                     LogicalAnd,
+        #                     get_logical_heap(bit.a),
+        #                     (LogicalNot, get_logical_heap(bit.b))
+        #                 )
+        #             )
+        #     sub_heap_for_bit[bit] = heap
+        #     return heap
+        #
+        # logical_heap = get_logical_heap(exit_bit)
+        # del sub_heap_for_bit
 
-        dnf = logical_heap_to_dnf(logical_heap)
-        dnf_instance = cls(dnf)
-        return dnf_instance
+        # dnf_for_heap = {}
+        # def logical_heap_to_dnf(heap_head) -> DNF:
+        #     if heap_head in dnf_for_heap:
+        #         return dnf_for_heap[heap_head]
+        #     heap_op = heap_head[0]
+        #     match heap_op:
+        #         case 0: # Identity
+        #             # simple DNF
+        #             dnf_heap = {frozenset({(heap_head[1], False)})}
+        #         case 1: # Not
+        #             next_heap = heap_head[1]
+        #             next_command = next_heap[0]
+        #             next_args_len = len(next_heap) - 1
+        #             if next_args_len == 1:
+        #                 next_arg = next_heap[1]
+        #                 if next_command == 0:   # not one
+        #                     dnf_heap = {frozenset({(heap_head[1], True)})}
+        #                 elif next_command == 1:   # not not
+        #                     dnf_heap = logical_heap_to_dnf(next_arg)
+        #                 else:
+        #                     raise Exception('Unreachble')
+        #             else:
+        #                 if next_command == 2:
+        #                     new_command = 3
+        #                 else:
+        #                     new_command = 2
+        #                 next_args = next_heap[1:]
+        #                 dnf_heap = logical_heap_to_dnf((
+        #                     new_command,
+        #                     *((LogicalNot, arg) for arg in next_args)
+        #                 ))
+        #         case 2: # and
+        #             heap_args = heap_head[1:]
+        #             dnf_from_args = []
+        #             for heap_arg in heap_args:
+        #                 dnf_from_args.append(logical_heap_to_dnf(heap_arg))
+        #
+        #             merged_dnf = dnf_from_args.pop()
+        #             for dnf in dnf_from_args:
+        #                 merged_dnf = merge_2_dnf(merged_dnf, dnf)
+        #             dnf_heap = merged_dnf
+        #         case 3: # or
+        #             heap_args = heap_head[1:]
+        #             dnf_from_args = []
+        #             for heap_arg in heap_args:
+        #                 dnf_from_args.append(logical_heap_to_dnf(heap_arg))
+        #
+        #             merged_dnf = dnf_from_args.pop()
+        #             for dnf in dnf_from_args:
+        #                 merged_dnf |= dnf
+        #             dnf_heap = merged_dnf
+        #         case _:
+        #             raise Exception('unreach')
+        #
+        #     dnf_for_heap[heap_head] = dnf_heap
+        #     return dnf_heap
+        #
+        # dnf = logical_heap_to_dnf(logical_heap)
+        # dnf_instance = cls(dnf)
+        # return dnf_instance
 
     def minimize_dnf(self):
+        if self.solved:
+            assert len(self.conjuncts) == 0
+            return self
         used_literals = Counter[DNF_LITERAL](itertools.chain.from_iterable(self))
-        assert len(used_literals.most_common()[0]) < len(self.terms)
+        # assert len(used_literals.most_common()[0]) < len(self.terms)
 
         while True:
             length = len(self)
@@ -222,6 +258,8 @@ class Dnf:
             self.swallow_minimize()
 
             new_length = len(self)
+            if new_length < 1 and self.solved is None:
+                raise Exception()
             new_rank = self.rank()
             new_terms_count = len(self.terms)
             new_mask = self.probe_dnf_mask()
@@ -229,13 +267,15 @@ class Dnf:
             assert new_rank <= rank
             if new_rank == rank:
                 break
-            print(
-                f'Minimization step '
-                f'({terms_count}, {length}, {rank}) -> ({new_terms_count}, {new_length}, {new_rank}) '
-                f'mask_same: {mask == new_mask}, '
-                f'mask: {new_mask}'
-            )
+            # print(
+            #     f'Minimization step '
+            #     f'({terms_count}, {length}, {rank}) -> ({new_terms_count}, {new_length}, {new_rank}) '
+            #     f'mask_same: {mask == new_mask}, '
+            #     f'mask: {new_mask}'
+            # )
             assert mask == new_mask
+
+        return self
 
     def sticky_minimize(self):
         for term in self.terms:
@@ -257,6 +297,12 @@ class Dnf:
 
             minimized_conjs = pos_conjs & neg_conjs
             if minimized_conjs:
+                if frozenset() in minimized_conjs:
+                    self.conjuncts = set()
+                    self.solved = True
+                    self.drop_terms()
+                    return
+
                 pos_diff = {conj | {pos_literal} for conj in minimized_conjs}
                 neg_diff = {conj | {neg_literal} for conj in minimized_conjs}
 
@@ -306,6 +352,9 @@ class Dnf:
     def apply_dnf_args(self, bound_args: dict[DNF_TERM, bool]) -> bool:
         assert len(bound_args) == len(self.full_terms)
 
+        if self.solved is not None:
+            return self.solved
+
         for conj in self:
             conj_result = all(
                 bound_args[term] ^ is_negative
@@ -314,6 +363,119 @@ class Dnf:
             if conj_result:
                 return True
         return False
+
+    def __and__(self, other: 'Dnf'):
+        if self.solved is not None:
+            if self.solved:
+                return other
+            else:
+                return self
+        if other.solved is not None:
+            if other.solved:
+                return self
+            else:
+                return other
+
+        def merge_2_cnj(conj1: CONJUNCT, conj2: CONJUNCT) -> CONJUNCT | None:
+            for term, is_neg in conj1:
+                if (term, not is_neg) in conj2:
+                    return None
+            return conj1 | conj2
+
+        merged_dnf = set()
+        for conj1 in self:
+            for conj2 in other:
+                merged_conj = merge_2_cnj(conj1, conj2)
+                if merged_conj:
+                    merged_dnf.add(merged_conj)
+        return Dnf(merged_dnf).minimize_dnf()
+
+    def __or__(self, other: 'Dnf'):
+        if self.solved is not None:
+            if self.solved:
+                return self
+            else:
+                return other
+        if other.solved is not None:
+            if other.solved:
+                return other
+            else:
+                return self
+
+        merged_dnf = self.conjuncts | other.conjuncts
+        return Dnf(merged_dnf).minimize_dnf()
+
+    def __xor__(self, other: 'Dnf'):
+        if self.solved is not None:
+            if self.solved:
+                return ~other
+            else:
+                return other
+        if other.solved is not None:
+            if other.solved:
+                return ~self
+            else:
+                return self
+
+        xor_result = (~self & other) | (self & ~other)
+        return xor_result.minimize_dnf()
+
+    def __invert__(self):
+        if self.solved is not None:
+            self.solved = not self.solved
+            return self
+
+        if not len(self):
+            raise Exception()
+
+        neg_conjs = list[list[DNF_LITERAL]]()
+        for conj in self:
+            neg_conj = set()
+            for term, is_neg in conj:
+                neg_conj.add((term, not is_neg))
+            neg_conjs.append(list(neg_conj))
+
+        # iter_indexes = [0] * len(neg_conjs)
+        conjs = {frozenset((literal,)) for literal in neg_conjs.pop()}
+        for neg_conj in neg_conjs:
+            new_conjs = set()
+            for conj in conjs:
+                for term, is_neg in neg_conj:
+                    if (term, not is_neg) in conj:
+                        continue
+                    new_conjs.add(conj | {(term, is_neg)})
+            conjs = new_conjs
+
+        # current_index = 0
+        # while current_index >= 0:
+        #     if current_index < len(neg_conjs) - 1:
+        #         current_index = len(neg_conjs) - 1
+        #
+        #     # construct conj
+        #     conj = set()
+        #     for conj_index, iter_index in enumerate(iter_indexes):
+        #         try:
+        #             term, is_neg = neg_conjs[conj_index][iter_index]
+        #         except IndexError:
+        #             print()
+        #         if (term, not is_neg) in conj:
+        #             # drop this conj
+        #             break
+        #         conj.add((term, is_neg))
+        #     else:
+        #         conjes.add(frozenset(conj))
+        #
+        #     while current_index >= 0:
+        #         iter_indexes[current_index] += 1
+        #         if iter_indexes[current_index] == len(neg_conjs[current_index]):
+        #             iter_indexes[current_index] = 0
+        #             current_index -= 1
+        #         else:
+        #             break
+        #
+        #     print(iter_indexes)
+
+        return Dnf(conjs).minimize_dnf()
 
 
 DnfTableRecord = tuple[bool, ...]

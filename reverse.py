@@ -108,8 +108,8 @@ def sha1_rev(sha: str, limit_length: int, used_symbols: list[str], check_string:
         counter = Counter(base_bits)
         filtered = filter(lambda kv: kv[1] > 1, counter.most_common())
         print(f'{idx}. ({len(counter)}, {counter.total()}) {dict(filtered)} {[b.name for b in base_bits]}')
-        dnf_old = Dnf.get_sdnf_for_bit_old(hash_bit, hash_data_map[hash_bit])
         dnf = Dnf.get_sdnf_for_bit(hash_bit)
+        dnf_old = Dnf.get_sdnf_for_bit_old(hash_bit, hash_data_map[hash_bit])
 
         mask_old = dnf_old.probe_dnf_mask()
         mask = dnf.probe_dnf_mask()
