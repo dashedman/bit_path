@@ -15,6 +15,7 @@ class RegistryItem:
 
 
 registry: dict[TreeBitKey, RegistryItem] = {}
+registry_hit_counter = 0
 # registry: dict[TreeBitKey, 'TreeBitAtom'] = {}
 
 
@@ -63,9 +64,11 @@ class TreeBitAtom:
 
     @classmethod
     def with_registry(cls, *operands: 'TreeBitAtom', value: float | bool | None = None):
+        global registry_hit_counter
         from_registry = registry.get(cls.get_key(*operands))
         if from_registry:
             result_bit = from_registry.bit
+            registry_hit_counter += 1
         else:
             result_bit = cls(*operands, value=value)
 
@@ -226,6 +229,31 @@ class TreeBitXOR(TreeBitOperator):
         )
 
 
+class TreeBitEq(TreeBitOperator):
+    cls_name = '='
+
+    @classmethod
+    def with_resolve(cls, a: TreeBitAtom, b: TreeBitAtom):
+        if a.resolved:
+            if b.resolved:
+                return ONE_BIT if a.value == b.value else ZERO_BIT
+            else:
+                return b if a.value else TreeBitNOT.with_resolve(b)
+
+        # A not resolved
+        if b.resolved:
+            return a if b.value else TreeBitNOT.with_resolve(a)
+
+        if a.key == b.key:
+            return ONE_BIT
+
+        # Nothing is resolved
+        return cls.with_registry(
+            a, b,
+            value=(1.0 - a.value) * (1.0 - b.value) + a.value * b.value
+        )
+
+
 class TreeBitAND(TreeBitOperator):
     cls_name = '&'
 
@@ -277,6 +305,30 @@ class TreeBitOR(TreeBitOperator):
             return a
         # Nothing is resolved
         return cls.with_registry(a, b, value=a.value + b.value - a.value * b.value)
+
+
+class TreeBitMultiOperator(TreeBitAtom, ABC):
+    cls_name: str = NotImplemented
+
+    def __init__(self, *args: TreeBitAtom, value: float | bool):
+        self.args = set(args)
+        super().__init__(value=value)
+
+    @cached_property
+    def key(self):
+        return self.get_key(*self.args)
+
+    @property
+    def label(self):
+        return f'{self.cls_name} {self.value:.02f}'
+
+    @classmethod
+    def get_key(cls, *args: TreeBitAtom):
+        return frozenset(args + (cls.cls_name,))
+
+    @property
+    def parents(self):
+        return self.args
 
 
 class UInt32Tree:

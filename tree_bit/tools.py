@@ -1,4 +1,4 @@
-from collections import deque
+from collections import deque, Counter
 from typing import Iterable
 
 import tree_bit
@@ -188,3 +188,73 @@ def get_ancestors_gen(bit: TreeBitAtom):
         visited.add(check_bit)
         bits_to_lookup.extend(check_bit.parents)
         yield check_bit
+
+
+def search_for_configurations(
+        root_bit: TreeBitAtom,
+        configurations_counter: Counter,
+        clusters_registry: dict[type[TreeBitAtom], list[int]],
+        visited: set,
+):
+
+    def searching_same_op_dfs(bit: TreeBitAtom):
+        if bit in visited:
+            return 0
+        visited.add(bit)
+
+        same_counter = 1
+
+        for parent in bit.parents:
+            if type(bit) is type(parent):
+                same_counter += searching_same_op_dfs(parent)
+            else:
+                parent_class_counter = searching_same_op_dfs(parent)
+                if parent_class_counter > 1:
+                    clusters_registry[type(parent)].append(parent_class_counter)
+        return same_counter
+
+    root_cluster_count = searching_same_op_dfs(root_bit)
+    if root_cluster_count > 1:
+        clusters_registry[type(root_bit)].append(root_cluster_count)
+    return
+
+
+
+    def searching_dfs(bit: TreeBitAtom):
+        if bit in visited:
+            return
+        visited.add(bit)
+
+        match type(bit):
+            case tree_bit.base.TreeBitNOT:
+                if type(bit.bit) == TreeBitXOR:
+                    configurations_counter['not_xor'] += 1
+                if type(bit.bit) == TreeBitNOT:
+                    configurations_counter['not_not'] += 1
+                searching_dfs(bit.bit)
+            case tree_bit.base.TreeBitXOR:
+                searching_dfs(bit.a)
+                searching_dfs(bit.b)
+            case tree_bit.base.TreeBitOR:
+                searching_dfs(bit.a)
+                searching_dfs(bit.b)
+            case tree_bit.base.TreeBitAND:
+                searching_dfs(bit.a)
+                searching_dfs(bit.b)
+            case tree_bit.base.TreeBit:
+                pass
+            case _:
+                raise Exception('unreachable')
+
+    searching_dfs(root_bit)
+    return configurations_counter
+
+def count_dfs_depth(bit: TreeBitAtom, visited: dict[TreeBitAtom, int], depth: int):
+    if bit in visited:
+        return 0
+    visited[bit] = depth
+
+    nodes_counter = 1
+    for parent in bit.parents:
+        nodes_counter += count_dfs_depth(parent, visited, depth + 1)
+    return nodes_counter

@@ -1,6 +1,7 @@
 import string
 import time
-from collections import Counter
+from collections import Counter, defaultdict
+from pprint import pformat
 
 import networkx
 import plotly
@@ -10,9 +11,9 @@ from obj import H0_START, H1_START, H2_START, H3_START, H4_START, BitList, str_b
     list_to_int, char_to_binary, sha1 as simple_sha1
 import pushers.presumptive as ppr
 from tree_bit.base import TreeBitAtom, UInt32Tree, registry, TreeBit, TreeBitNOT, TreeBitOperator, init_registry, \
-    TreeBitOR, TreeBitAND, TreeBitXOR
+    TreeBitOR, TreeBitAND, TreeBitXOR, registry_hit_counter
 from tree_bit.dnf import Dnf, DnfTable
-from tree_bit.tools import extract_base_bits
+from tree_bit.tools import extract_base_bits, search_for_configurations, count_dfs_depth
 
 OperationsCounter = dict[tuple, int]
 real_bits_scan: str = ''
@@ -81,11 +82,38 @@ def sha1_rev(sha: str, limit_length: int, used_symbols: list[str], check_string:
 
     w, *predicted_h = forward_move(limit_length, probability_mask)
 
+
     # unpack hash bits
     hash_bits = []
     for h in predicted_h:
         for bit in h.bits:
             hash_bits.append(bit)
+
+    print('REGISTRY HITS:', registry_hit_counter)
+
+
+    # configurations search
+    visited = set()
+    configurations_counter = Counter()
+    clusters_registry = defaultdict(list)
+    for h in hash_bits:
+        search_for_configurations(h, configurations_counter, clusters_registry, visited)
+
+    print(sorted(clusters_registry[TreeBitXOR], reverse=True))
+    for reg, reg_list in clusters_registry.items():
+        print(reg.__name__, len(reg_list), sum(reg_list), len(reg_list) - sum(reg_list))
+        reg_list.sort(reverse=True)
+        clusters_registry[reg] = reg_list[:10]
+    print(pformat(clusters_registry, depth=2))
+    print(pformat(configurations_counter.most_common()))
+
+    visited = {}
+    nodes_count = 0
+    for h in hash_bits:
+        nodes_count += count_dfs_depth(h, visited, depth=1)
+    print(nodes_count, max(visited.values()), )
+
+    return
 
     hash_data = tuple(
         bit
@@ -612,7 +640,7 @@ def print_tree(bits: list[TreeBitAtom]):
 
 
 def test_sha():
-    word = '1'
+    word = '1' * 20
     bit_word = ''.join(map(char_to_binary, word))
     # used_symbols = ['1', '2']
     # used_symbols = list(string.digits)
