@@ -1,9 +1,9 @@
 from abc import ABC
 from dataclasses import dataclass, field
 from functools import cached_property
+from typing import Iterable
 
 from obj import BitList, int32_to_list, list_to_int
-
 
 TreeBitKey = str | tuple | frozenset
 
@@ -36,16 +36,18 @@ class TreeBitAtom:
         return hash(self.key)
 
     def __eq__(self, other: 'TreeBitAtom'):
-        return self.key == other.key
+        if self.key == other.key:
+            return True
+        return TreeBitMultiEq.with_resolve(self, other)
 
     def __xor__(self, other):
-        return TreeBitXOR.with_resolve(self, other)
+        return TreeBitMultiXor.with_resolve(self, other)
 
     def __and__(self, other):
-        return TreeBitAND.with_resolve(self, other)
+        return TreeBitMultiAnd.with_resolve(self, other)
 
     def __or__(self, other):
-        return TreeBitOR.with_resolve(self, other)
+        return TreeBitMultiOr.with_resolve(self, other)
 
     def __invert__(self):
         return TreeBitNOT.with_resolve(self)
@@ -170,7 +172,8 @@ class TreeBitNOT(TreeBitAtom):
         if isinstance(a, cls):
             return a.bit
         # Nothing is resolved
-        return cls.with_registry(a, value=1.0 - a.value)
+        return cls(a, value=1.0 - a.value)
+        # return cls.with_registry(a, value=1.0 - a.value)
 
     @property
     def parents(self):
@@ -310,9 +313,16 @@ class TreeBitOR(TreeBitOperator):
 class TreeBitMultiOperator(TreeBitAtom, ABC):
     cls_name: str = NotImplemented
 
-    def __init__(self, *args: TreeBitAtom, value: float | bool):
-        self.args = set(args)
+    def __init__(self, *args: TreeBitAtom, value: float | bool, args_set: set[TreeBitAtom] | None = None):
+        if args_set is None:
+            args_set = set()
+        if args:
+            args_set.update(args)
+        self.args = args_set
         super().__init__(value=value)
+
+    def __len__(self):
+        return len(self.args)
 
     @cached_property
     def key(self):
@@ -329,6 +339,204 @@ class TreeBitMultiOperator(TreeBitAtom, ABC):
     @property
     def parents(self):
         return self.args
+
+
+class TreeBitMultiAnd(TreeBitMultiOperator):
+    @classmethod
+    def with_resolve(cls, *operands: TreeBitAtom):
+        args = set()
+        not_args = set()
+
+        for operand in operands:
+            operand_args: Iterable[TreeBitAtom]
+
+            if isinstance(operand, TreeBitMultiAnd):
+                operand_args = operand.args
+            elif isinstance(operand, TreeBitNOT) and isinstance(operand.bit, TreeBitMultiOr):
+                operand_args = [
+                    TreeBitNOT.with_resolve(sub_operand)
+                    for sub_operand in operand.bit.args
+                ]
+            else:
+                operand_args = (operand,)
+
+            for op_arg in operand_args:
+                if op_arg.resolved:
+                    if op_arg.value:
+                        # A & 1 = A
+                        continue
+                    else:
+                        # A & 0 = 0
+                        return ZERO_BIT
+
+                if isinstance(op_arg, TreeBitNOT):
+                    if op_arg.bit in args:
+                        # A & ~A = 0
+                        return ZERO_BIT
+                    else:
+                        not_args.add(op_arg.bit)
+                elif op_arg in not_args:
+                    # A & ~A = 0
+                    return ZERO_BIT
+
+                args.add(op_arg)
+
+        if len(args) == 0:
+            return ONE_BIT
+        elif len(args) == 1:
+            return args.pop()
+
+        true_probability = 1
+        for arg in args:
+            true_probability *= arg.value
+        return cls(
+            value=true_probability,
+            args_set=args,
+        )
+
+
+
+class TreeBitMultiOr(TreeBitMultiOperator):
+    @classmethod
+    def with_resolve(cls, *operands: TreeBitAtom):
+        args = set()
+        not_args = set()
+
+        for operand in operands:
+            operand_args: Iterable[TreeBitAtom]
+
+            if isinstance(operand, TreeBitMultiOr):
+                operand_args = operand.args
+            elif isinstance(operand, TreeBitNOT) and isinstance(operand.bit, TreeBitMultiAnd):
+                operand_args = [
+                    TreeBitNOT.with_resolve(sub_operand)
+                    for sub_operand in operand.bit.args
+                ]
+            else:
+                operand_args = (operand,)
+
+            for op_arg in operand_args:
+                if op_arg.resolved:
+                    if op_arg.value:
+                        # A | 1 = 1
+                        return ONE_BIT
+                    else:
+                        # A | 0 = A
+                        continue
+
+                if isinstance(op_arg, TreeBitNOT):
+                    if op_arg.bit in args:
+                        # A | ~A = 1
+                        return ONE_BIT
+                    else:
+                        not_args.add(op_arg.bit)
+                elif op_arg in not_args:
+                    # A | ~A = 1
+                    return ONE_BIT
+
+                args.add(op_arg)
+
+        if len(args) == 0:
+            return ZERO_BIT
+        elif len(args) == 1:
+            return args.pop()
+
+        false_probability = 1
+        for arg in args:
+            false_probability *= (1 - arg.value)
+        return cls(
+            value=1 - false_probability,
+            args_set=args,
+        )
+
+
+class TreeBitMultiXor(TreeBitMultiOperator):
+    @classmethod
+    def with_resolve(cls, *operands: TreeBitAtom):
+        args = set()
+        not_counter = 0
+
+        for operand in operands:
+            operand_args: Iterable[TreeBitAtom]
+
+            if isinstance(operand, TreeBitMultiXor):
+                operand_args = operand.args
+            elif isinstance(operand, TreeBitMultiEq):
+                if len(operand) % 2 == 1:
+                    # odd equality same as xor
+                    pass
+                else:
+                    # even equality same as ~xor
+                    not_counter += 1
+                operand_args = operand.args
+
+            else:
+                operand_args = (operand,)
+
+            for op_arg in operand_args:
+                if op_arg.resolved:
+                    if op_arg.value:
+                        # A ^ 1 = ~A
+                        not_counter += 1
+                        continue
+                    else:
+                        # A ^ 0 = A
+                        continue
+
+                if op_arg in args:
+                    # Z ^ A ^ A = Z ^ 0 = Z
+                    # just remove from args
+                    args.remove(op_arg)
+                elif isinstance(op_arg, TreeBitNOT):
+                    if op_arg.bit in args:
+                        # Z ^ A ^ ~A = Z ^ 1 = ~Z
+                        # remove from args and increase not counter
+                        args.remove(op_arg.bit)
+                    else:
+                        # Z ^ ~A = ~(Z ^ A)
+                        args.add(op_arg.bit)
+                    # move arg's not over xor
+                    not_counter += 1
+                    continue
+
+                args.add(op_arg)
+
+        is_negative = not_counter % 2 == 1
+        if len(args) == 0:
+            return ONE_BIT if is_negative else ZERO_BIT
+        elif len(args) == 1:
+            last_arg = args.pop()
+            return TreeBitNOT.with_resolve(last_arg) if is_negative else last_arg
+
+        # TODO:
+        # false_probability = 1
+        # for arg in args:
+        #     false_probability *= (1 - arg.value)
+        xor_instance = cls(
+            value=0.5,
+            args_set=args,
+        )
+        if is_negative:
+            return TreeBitNOT.with_resolve(xor_instance)
+        else:
+            return xor_instance
+
+
+class TreeBitMultiEq(TreeBitMultiOperator):
+    """
+    eq(n) = {
+        ~xor(n) if n = 2m;
+        xor(n) if n = 2m + 1;
+    }
+    """
+    @classmethod
+    def with_resolve(cls, *operands: TreeBitAtom):
+        xor = TreeBitMultiXor.with_resolve(*operands)
+        if len(operands) % 2 == 0:
+            # even args same as ~xor
+            return TreeBitNOT.with_resolve(xor)
+        else:
+            return xor
 
 
 class UInt32Tree:
