@@ -11,7 +11,8 @@ from obj import H0_START, H1_START, H2_START, H3_START, H4_START, BitList, str_b
     list_to_int, char_to_binary, sha1 as simple_sha1
 import pushers.presumptive as ppr
 from tree_bit.base import TreeBitAtom, UInt32Tree, registry, TreeBit, TreeBitNOT, TreeBitOperator, init_registry, \
-    TreeBitOR, TreeBitAND, TreeBitXOR, registry_hit_counter
+    TreeBitOR, TreeBitAND, TreeBitXOR, registry_hit_counter, TreeBitMultiOr, TreeBitMultiAnd, TreeBitMultiXor, \
+    TreeBitMultiEq
 from tree_bit.dnf import Dnf, DnfTable
 from tree_bit.tools import extract_base_bits, search_for_configurations, count_dfs_depth
 
@@ -89,7 +90,10 @@ def sha1_rev(sha: str, limit_length: int, used_symbols: list[str], check_string:
         for bit in h.bits:
             hash_bits.append(bit)
 
+    # draw_bit_tree(hash_bits[0])
+    draw_graph_parents(predicted_h_bits=hash_bits)
     print('REGISTRY HITS:', registry_hit_counter)
+    return
 
 
     # configurations search
@@ -224,7 +228,12 @@ def algo(bits: BitList):
     k4 = UInt32Tree.from_int(0xCA62C1D6, 'K4')
 
     # Main loop
+    pm, ph = 0, 0
     for i in range(0, MAX_W):
+        nm = registry_hit_counter['miss']
+        nh = registry_hit_counter['hit']
+        print(i, len(registry), nm, nh, '+', nm - pm, nh - ph)
+        pm, ph = nm, nh
         if 0 <= i <= 19:
             f = (b & c) | ((~b) & d)
             k = k1
@@ -342,6 +351,10 @@ def draw_graph_parents(
         TreeBitOR: "orange",
         TreeBitAND: 'yellow', #"olive",
         TreeBitXOR: "green",
+        TreeBitMultiAnd: "yellow",
+        TreeBitMultiOr: "orange",
+        TreeBitMultiXor: "green",
+        TreeBitMultiEq: "cyan",
     }
 
     subset_tone = [
@@ -370,7 +383,8 @@ def draw_graph_parents(
         labels[bit.key] = bit.label
 
     used_bits = set(curr_line)
-    while curr_line and counter:
+    edge_counter = 0
+    while curr_line and counter < 11:
         counter += 1
 
         used_prev = 0
@@ -383,13 +397,15 @@ def draw_graph_parents(
                 if parent_bit not in used_bits:
                     next_line.append(parent_bit)
                     used_bits.add(parent_bit)
-                    graph.add_node(parent_bit.key, subset=counter, color=color)
+                    if isinstance(parent_bit, TreeBit):
+                        graph.add_node(parent_bit.key, subset=counter, color=color)
                     labels[parent_bit.key] = parent_bit.label
                 else:
                     if not parent_bit.resolved:
                         used_prev += 1
 
-                graph.add_edge(bit.key, parent_bit.key, color=color)
+                # graph.add_edge(bit.key, parent_bit.key, color=color)
+                edge_counter += 1
 
         print(f'line {counter}: {len(curr_line)}, used on prev lines: {used_prev}')
         curr_line, next_line = next_line, []
@@ -640,7 +656,7 @@ def print_tree(bits: list[TreeBitAtom]):
 
 
 def test_sha():
-    word = '1' * 20
+    word = '1' * 1
     bit_word = ''.join(map(char_to_binary, word))
     # used_symbols = ['1', '2']
     # used_symbols = list(string.digits)

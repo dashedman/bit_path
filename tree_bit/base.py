@@ -1,4 +1,5 @@
 from abc import ABC
+from collections import Counter
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Iterable
@@ -15,7 +16,7 @@ class RegistryItem:
 
 
 registry: dict[TreeBitKey, RegistryItem] = {}
-registry_hit_counter = 0
+registry_hit_counter = Counter()
 # registry: dict[TreeBitKey, 'TreeBitAtom'] = {}
 
 
@@ -23,13 +24,12 @@ class TreeBitAtom:
     value: bool | float = None
     name: str = NotImplemented
 
-    def __init__(self, *args, value: float | bool | None = None):
+    def __init__(self, *args, value: float | bool | None = None, **_):
         if value is not None:
             self.value = value
 
         if self.key in registry:
             raise Exception(f'Registry is not empty for key {self.key}')
-        # registry[self.key] = self
         registry[self.key] = RegistryItem(self)
 
     def __hash__(self):
@@ -65,17 +65,21 @@ class TreeBitAtom:
     #     return registry.get(cls.get_key(*operands)) or cls(*operands)
 
     @classmethod
-    def with_registry(cls, *operands: 'TreeBitAtom', value: float | bool | None = None):
-        global registry_hit_counter
-        from_registry = registry.get(cls.get_key(*operands))
+    def with_registry(cls, operands, value: float | bool | None = None):
+        hit_key = cls.get_key(operands)
+        from_registry = registry.get(hit_key)
         if from_registry:
             result_bit = from_registry.bit
-            registry_hit_counter += 1
+            registry_hit_counter['hit'] += 1
         else:
-            result_bit = cls(*operands, value=value)
+            registry_hit_counter['miss'] += 1
+            result_bit = cls(operands, value=value)
 
-        for operand in operands:
-            registry[operand.key].usages.add(result_bit.key)
+        if isinstance(operands, Iterable):
+            for operand in operands:
+                registry[operand.key].usages.add(result_bit.key)
+        else:
+            registry[operands.key].usages.add(result_bit.key)
 
         return result_bit
 
@@ -159,7 +163,7 @@ class TreeBitNOT(TreeBitAtom):
 
     @classmethod
     def get_key(cls, bit: TreeBitAtom):
-        return bit.key, cls.cls_name
+        return cls.cls_name, bit
 
     @property
     def label(self):
@@ -172,8 +176,8 @@ class TreeBitNOT(TreeBitAtom):
         if isinstance(a, cls):
             return a.bit
         # Nothing is resolved
-        return cls(a, value=1.0 - a.value)
-        # return cls.with_registry(a, value=1.0 - a.value)
+        # return cls(a, value=1.0 - a.value)
+        return cls.with_registry(a, value=1.0 - a.value)
 
     @property
     def parents(self):
@@ -313,11 +317,11 @@ class TreeBitOR(TreeBitOperator):
 class TreeBitMultiOperator(TreeBitAtom, ABC):
     cls_name: str = NotImplemented
 
-    def __init__(self, *args: TreeBitAtom, value: float | bool, args_set: set[TreeBitAtom] | None = None):
-        if args_set is None:
-            args_set = set()
-        if args:
-            args_set.update(args)
+    def __init__(self, args_set: frozenset[TreeBitAtom], value: float | bool):
+        # if args_set is None:
+        #     args_set = set()
+        # if args:
+        #     args_set.update(args)
         self.args = args_set
         super().__init__(value=value)
 
@@ -326,15 +330,15 @@ class TreeBitMultiOperator(TreeBitAtom, ABC):
 
     @cached_property
     def key(self):
-        return self.get_key(*self.args)
+        return self.get_key(self.args)
 
     @property
     def label(self):
         return f'{self.cls_name} {self.value:.02f}'
 
     @classmethod
-    def get_key(cls, *args: TreeBitAtom):
-        return frozenset(args + (cls.cls_name,))
+    def get_key(cls, args: frozenset[TreeBitAtom]):
+        return cls.cls_name, args
 
     @property
     def parents(self):
@@ -342,6 +346,8 @@ class TreeBitMultiOperator(TreeBitAtom, ABC):
 
 
 class TreeBitMultiAnd(TreeBitMultiOperator):
+    cls_name = '&'
+
     @classmethod
     def with_resolve(cls, *operands: TreeBitAtom):
         args = set()
@@ -389,14 +395,17 @@ class TreeBitMultiAnd(TreeBitMultiOperator):
         true_probability = 1
         for arg in args:
             true_probability *= arg.value
-        return cls(
+        return cls.with_registry(
+            frozenset(args),
             value=true_probability,
-            args_set=args,
+            # args_set=args,
         )
 
 
 
 class TreeBitMultiOr(TreeBitMultiOperator):
+    cls_name = '|'
+
     @classmethod
     def with_resolve(cls, *operands: TreeBitAtom):
         args = set()
@@ -444,13 +453,16 @@ class TreeBitMultiOr(TreeBitMultiOperator):
         false_probability = 1
         for arg in args:
             false_probability *= (1 - arg.value)
-        return cls(
+        return cls.with_registry(
+            frozenset(args),
             value=1 - false_probability,
-            args_set=args,
+            # args_set=args,
         )
 
 
 class TreeBitMultiXor(TreeBitMultiOperator):
+    cls_name = '^'
+
     @classmethod
     def with_resolve(cls, *operands: TreeBitAtom):
         args = set()
@@ -458,6 +470,10 @@ class TreeBitMultiXor(TreeBitMultiOperator):
 
         for operand in operands:
             operand_args: Iterable[TreeBitAtom]
+
+            if isinstance(operand, TreeBitNOT):
+                operand = operand.bit
+                not_counter += 1
 
             if isinstance(operand, TreeBitMultiXor):
                 operand_args = operand.args
@@ -483,23 +499,20 @@ class TreeBitMultiXor(TreeBitMultiOperator):
                         # A ^ 0 = A
                         continue
 
+                if isinstance(op_arg, TreeBitNOT):
+                    # unpack not
+                    # Z ^ ~A = ~(Z ^ A)
+                    op_arg = op_arg.bit
+                    # move arg's not over xor
+                    not_counter += 1
+
                 if op_arg in args:
                     # Z ^ A ^ A = Z ^ 0 = Z
                     # just remove from args
                     args.remove(op_arg)
-                elif isinstance(op_arg, TreeBitNOT):
-                    if op_arg.bit in args:
-                        # Z ^ A ^ ~A = Z ^ 1 = ~Z
-                        # remove from args and increase not counter
-                        args.remove(op_arg.bit)
-                    else:
-                        # Z ^ ~A = ~(Z ^ A)
-                        args.add(op_arg.bit)
-                    # move arg's not over xor
-                    not_counter += 1
-                    continue
-
-                args.add(op_arg)
+                else:
+                    # Z ^ A
+                    args.add(op_arg)
 
         is_negative = not_counter % 2 == 1
         if len(args) == 0:
@@ -512,9 +525,10 @@ class TreeBitMultiXor(TreeBitMultiOperator):
         # false_probability = 1
         # for arg in args:
         #     false_probability *= (1 - arg.value)
-        xor_instance = cls(
+        xor_instance = cls.with_registry(
+            frozenset(args),
             value=0.5,
-            args_set=args,
+            # args_set=args,
         )
         if is_negative:
             return TreeBitNOT.with_resolve(xor_instance)
@@ -529,6 +543,8 @@ class TreeBitMultiEq(TreeBitMultiOperator):
         xor(n) if n = 2m + 1;
     }
     """
+    cls_name = '='
+
     @classmethod
     def with_resolve(cls, *operands: TreeBitAtom):
         xor = TreeBitMultiXor.with_resolve(*operands)
