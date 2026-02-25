@@ -14,7 +14,7 @@ from tree_bit.base import TreeBitAtom, UInt32Tree, registry, TreeBit, TreeBitNOT
     TreeBitOR, TreeBitAND, TreeBitXOR, registry_hit_counter, TreeBitMultiOr, TreeBitMultiAnd, TreeBitMultiXor, \
     TreeBitMultiEq
 from tree_bit.dnf import Dnf, DnfTable
-from tree_bit.tools import extract_base_bits, search_for_configurations, count_dfs_depth
+from tree_bit.tools import extract_base_bits, search_for_configurations, count_dfs_depth, get_all_used_bits_gen, multi_operator_replacement, usages_map_factory
 
 OperationsCounter = dict[tuple, int]
 real_bits_scan: str = ''
@@ -91,9 +91,13 @@ def sha1_rev(sha: str, limit_length: int, used_symbols: list[str], check_string:
             hash_bits.append(bit)
 
     # draw_bit_tree(hash_bits[0])
-    draw_graph_parents(predicted_h_bits=hash_bits)
+    # draw_graph_parents(predicted_h_bits=hash_bits)
     print('REGISTRY HITS:', registry_hit_counter)
-    return
+    # return
+
+    old_map = usages_map_factory(hash_bits)
+    multi_operator_replacement(hash_bits)
+    new_map = usages_map_factory(hash_bits)
 
 
     # configurations search
@@ -103,12 +107,12 @@ def sha1_rev(sha: str, limit_length: int, used_symbols: list[str], check_string:
     for h in hash_bits:
         search_for_configurations(h, configurations_counter, clusters_registry, visited)
 
-    print(sorted(clusters_registry[TreeBitXOR], reverse=True))
-    for reg, reg_list in clusters_registry.items():
-        print(reg.__name__, len(reg_list), sum(reg_list), len(reg_list) - sum(reg_list))
-        reg_list.sort(reverse=True)
-        clusters_registry[reg] = reg_list[:10]
-    print(pformat(clusters_registry, depth=2))
+    # print(sorted(clusters_registry[TreeBitXOR], reverse=True))
+    # for reg, reg_list in clusters_registry.items():
+    #     print(reg.__name__, len(reg_list), sum(reg_list), len(reg_list) - sum(reg_list))
+    #     reg_list.sort(reverse=True)
+    #     clusters_registry[reg] = reg_list[:10]
+    # print(pformat(clusters_registry, depth=2))
     print(pformat(configurations_counter.most_common()))
 
     visited = {}
@@ -117,6 +121,10 @@ def sha1_rev(sha: str, limit_length: int, used_symbols: list[str], check_string:
         nodes_count += count_dfs_depth(h, visited, depth=1)
     print(nodes_count, max(visited.values()), )
 
+    all_used = set(get_all_used_bits_gen(hash_bits))
+    all_used_keys = {b.key for b in all_used}
+    free_registry = set(registry) - all_used_keys
+    print(len(free_registry))
     return
 
     hash_data = tuple(

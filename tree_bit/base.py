@@ -36,18 +36,20 @@ class TreeBitAtom:
         return hash(self.key)
 
     def __eq__(self, other: 'TreeBitAtom'):
-        if self.key == other.key:
-            return True
-        return TreeBitMultiEq.with_resolve(self, other)
+        return self.key == other.key
+        # return TreeBitMultiEq.with_resolve(self, other)
+
+    def __ne__(self, other: 'TreeBitAtom'):
+        return not self.__eq__(other)
 
     def __xor__(self, other):
-        return TreeBitMultiXor.with_resolve(self, other)
+        return TreeBitXOR.with_resolve(self, other)
 
     def __and__(self, other):
-        return TreeBitMultiAnd.with_resolve(self, other)
+        return TreeBitAND.with_resolve(self, other)
 
     def __or__(self, other):
-        return TreeBitMultiOr.with_resolve(self, other)
+        return TreeBitOR.with_resolve(self, other)
 
     def __invert__(self):
         return TreeBitNOT.with_resolve(self)
@@ -75,11 +77,11 @@ class TreeBitAtom:
             registry_hit_counter['miss'] += 1
             result_bit = cls(operands, value=value)
 
-        if isinstance(operands, Iterable):
-            for operand in operands:
-                registry[operand.key].usages.add(result_bit.key)
-        else:
-            registry[operands.key].usages.add(result_bit.key)
+        # if isinstance(operands, Iterable):
+        #     for operand in operands:
+        #         registry[operand.key].usages.add(result_bit.key)
+        # else:
+        #     registry[operands.key].usages.add(result_bit.key)
 
         return result_bit
 
@@ -187,24 +189,23 @@ class TreeBitNOT(TreeBitAtom):
 class TreeBitOperator(TreeBitAtom, ABC):
     cls_name: str = NotImplemented
 
-    def __init__(self, a: TreeBitAtom, b: TreeBitAtom, *, value: float | bool):
-        self.a = a
-        self.b = b
+    def __init__(self, args: tuple[TreeBitAtom, TreeBitAtom], *, value: float | bool):
+        self.a, self.b = args
         # self.name = '(' + str(a.name) + self.cls_name + str(b.name) + ')'
         # print(self.name)
         super().__init__(value=value)
 
     @cached_property
     def key(self):
-        return self.get_key(self.a, self.b)
+        return self.get_key(self.parents)
 
     @property
     def label(self):
         return f'{self.cls_name} {self.value:.02f}'
 
     @classmethod
-    def get_key(cls, a: TreeBitAtom, b: TreeBitAtom):
-        return frozenset((a.key, b.key, cls.cls_name))
+    def get_key(cls, operands):
+        return frozenset((cls.cls_name, *operands))
 
     @property
     def parents(self):
@@ -231,7 +232,7 @@ class TreeBitXOR(TreeBitOperator):
 
         # Nothing is resolved
         return cls.with_registry(
-            a, b,
+            (a, b),
             value=(1.0 - a.value) * b.value + a.value * (1.0 - b.value)
         )
 
@@ -256,7 +257,7 @@ class TreeBitEq(TreeBitOperator):
 
         # Nothing is resolved
         return cls.with_registry(
-            a, b,
+            (a, b),
             value=(1.0 - a.value) * (1.0 - b.value) + a.value * b.value
         )
 
@@ -285,7 +286,7 @@ class TreeBitAND(TreeBitOperator):
             return a
 
         # Nothing is resolved
-        return cls.with_registry(a, b, value=a.value * b.value)
+        return cls.with_registry((a, b), value=a.value * b.value)
 
 
 class TreeBitOR(TreeBitOperator):
@@ -311,7 +312,7 @@ class TreeBitOR(TreeBitOperator):
         if a.key == b.key:
             return a
         # Nothing is resolved
-        return cls.with_registry(a, b, value=a.value + b.value - a.value * b.value)
+        return cls.with_registry((a, b), value=a.value + b.value - a.value * b.value)
 
 
 class TreeBitMultiOperator(TreeBitAtom, ABC):
