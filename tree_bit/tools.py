@@ -6,12 +6,14 @@ from tree_bit.base import TreeBitAtom, TreeBit, registry, TreeBitNOT, TreeBitXOR
     TreeBitMultiXor, TreeBitMultiAnd, TreeBitMultiOr, TreeBitMultiOperator
 
 
-def extract_base_bits(final_bit: TreeBitAtom) -> list[TreeBit]:
+def extract_base_bits(final_bit: TreeBitAtom, visited: set | None = None) -> list[TreeBit]:
     # BFS
+    if visited is None:
+        visited = set()
+
     bits_to_check = deque()
     bits_to_check.appendleft(final_bit)
     result_bits = []
-    visited = set()
     while bits_to_check:
         bit_check = bits_to_check.pop()
 
@@ -20,11 +22,20 @@ def extract_base_bits(final_bit: TreeBitAtom) -> list[TreeBit]:
 
         visited.add(bit_check)
 
-
         if isinstance(bit_check, TreeBit):
             result_bits.append(bit_check)
         else:
             bits_to_check.extend(bit_check.parents)
+    return result_bits
+
+
+def extract_base_bits_for_many(final_bits: list[TreeBitAtom], visited: set | None = None) -> list[TreeBit]:
+    if visited is None:
+        visited = set()
+
+    result_bits = []
+    for final_bit in final_bits:
+        result_bits.extend(extract_base_bits(final_bit, visited))
     return result_bits
 
 
@@ -197,6 +208,13 @@ def get_all_used_bits_gen(bits_to_check: Iterable[TreeBitAtom]):
     for bit2check in bits_to_check:
         for ancestor in get_ancestors_gen(bit2check, visited=visited):
             yield ancestor
+
+
+def count_all_operators(bit2check: TreeBitAtom):
+    counter = 0
+    for _ in get_ancestors_gen(bit2check):
+        counter += 1
+    return counter
 
 
 def search_for_configurations(
@@ -414,3 +432,31 @@ def multi_operator_replacement(root_bits: list[TreeBitAtom]):
             # new_usages = usages_map_factory(root_bits, _debug_exclude=replacement_cluster)
             # assert new_usages == usages
 
+
+class HashableSet(set):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.__hash = None
+
+    def __hash__(self):
+        if self.__hash is None:
+            self.__hash = self.__calc_hash()
+        return self.__hash
+
+    def __calc_hash(self):
+        return hash(frozenset(self))
+
+    def add(self, __element):
+        super().add(__element)
+        self.__hash = None
+
+    def remove(self, __element):
+        super().remove(__element)
+        self.__hash = None
+
+    def copy(self) -> 'HashableSet':
+        return HashableSet(self)
+
+    def update(self, *s):
+        super().update(*s)
+        self.__hash = None
